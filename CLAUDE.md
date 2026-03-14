@@ -86,7 +86,7 @@ When creating a new module or `CLAUDE.md` anywhere in this repository:
 
 **CLAUDE.md structure:**
 - Start with the full content of `CODING_GUIDELINES.md`, verbatim
-- Then add `---` followed by `# Package: ezphp/<name>` (or `# Directory: <name>`)
+- Then add `---` followed by `# Package: ez-php/<name>` (or `# Directory: <name>`)
 - Module-specific section must cover:
   - Source structure (file tree with one-line descriptions per file)
   - Key classes and their responsibilities
@@ -100,7 +100,7 @@ When creating a new module or `CLAUDE.md` anywhere in this repository:
 **Docker setup:** copy `docker-compose.yml`, `docker/`, `.env.example` and `start.sh` from the repository root and adapt them for the module (service names, ports, required services). Use a unique `DB_PORT` in `.env.example` that is not used by any other package — increment by one per package starting with `3306` (root).
 ---
 
-# Package: ezphp/cache
+# Package: ez-php/cache
 
 Array, file, and Redis cache drivers for ez-php applications.
 
@@ -223,6 +223,6 @@ Unknown driver values fall back to `ArrayDriver`.
 | Cache tagging and tag-based invalidation | Higher-level cache abstraction |
 | Session storage | PHP native sessions or a dedicated session driver |
 | HTTP response caching (reverse proxy) | Infrastructure layer (Nginx, Varnish) |
-| Queue / job storage | `ezphp/queue` |
-| Rate limiting counters | `ezphp/rate-limiter` |
-| ORM query result caching | `ezphp/orm` |
+| Queue / job storage | `ez-php/queue` |
+| Rate limiting counters | `ez-php/rate-limiter` |
+| ORM query result caching | `ez-php/orm` |

@@ -9,11 +9,11 @@
       "email": "andreas.uretschnig@gmail.com"
     }
   ],
-  "keywords": ["cache", "redis", "php", "framework", "ezphp"],
-  "homepage": "https://github.com/ezphp/cache",
+  "keywords": ["cache", "redis", "php", "framework", "ez-php"],
+  "homepage": "https://github.com/ez-php/cache",
   "support": {
-    "issues": "https://github.com/ezphp/cache/issues",
-    "source": "https://github.com/ezphp/cache"
+    "issues": "https://github.com/ez-php/cache/issues",
+    "source": "https://github.com/ez-php/cache"
   },
   "require": {
     "php": "^8.5",

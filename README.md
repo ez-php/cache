@@ -1,19 +1,19 @@
-# ezphp/cache
+# ez-php/cache
 
-Cache module for the [ez-php framework](https://github.com/ezphp/framework) — array, file, and Redis drivers with a unified interface.
+Cache module for the [ez-php framework](https://github.com/ez-php/framework) — array, file, and Redis drivers with a unified interface.
 
-[![CI](https://github.com/ezphp/cache/actions/workflows/ci.yml/badge.svg)](https://github.com/ezphp/cache/actions/workflows/ci.yml)
+[![CI](https://github.com/ez-php/cache/actions/workflows/ci.yml/badge.svg)](https://github.com/ez-php/cache/actions/workflows/ci.yml)
 
 ## Requirements
 
 - PHP 8.5+
-- ezphp/framework ^1.0
+- ez-php/framework ^1.0
 - ext-redis (for Redis driver)
 
 ## Installation
 
 ```bash
-composer require ezphp/cache
+composer require ez-php/cache
 ```
 
 ## Setup
