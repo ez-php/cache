@@ -1,0 +1,24 @@
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+      args:
+        WWWUSER: 1000
+        WWWGROUP: 1000
+    container_name: ez-php-cache-app
+    volumes:
+      - ../..:/var/www/html
+    working_dir: /var/www/html
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_started
+
+  redis:
+    image: redis:7-alpine
+    container_name: ez-php-cache-redis
+    ports:
+      - "6380:6379"
