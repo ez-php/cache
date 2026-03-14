@@ -1,5 +1,6 @@
 {
   "name": "ez-php/cache",
+  "version": "0.1.0",
   "description": "Cache module for the ez-php framework — array, file, and Redis drivers with a unified interface",
   "type": "library",
   "license": "MIT",
