@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace EzPhp\Cache;
 
-use EzPhp\Application\Application;
-use EzPhp\Config\Config;
-use EzPhp\ServiceProvider\ServiceProvider;
+use EzPhp\Contracts\ConfigInterface;
+use EzPhp\Contracts\ContainerInterface;
+use EzPhp\Contracts\ServiceProvider;
 
 /**
  * Class CacheServiceProvider
@@ -25,8 +25,8 @@ final class CacheServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        $this->app->bind(CacheInterface::class, function (Application $app): CacheInterface {
-            $config = $app->make(Config::class);
+        $this->app->bind(CacheInterface::class, function (ContainerInterface $app): CacheInterface {
+            $config = $app->make(ConfigInterface::class);
             $driver = $config->get('cache.driver', 'array');
             $driver = is_string($driver) ? $driver : 'array';
 
@@ -39,11 +39,11 @@ final class CacheServiceProvider extends ServiceProvider
     }
 
     /**
-     * @param Config $config
+     * @param ConfigInterface $config
      *
      * @return FileDriver
      */
-    private function makeFile(Config $config): FileDriver
+    private function makeFile(ConfigInterface $config): FileDriver
     {
         $path = $config->get('cache.file_path', sys_get_temp_dir() . '/ez-cache');
 
@@ -51,11 +51,11 @@ final class CacheServiceProvider extends ServiceProvider
     }
 
     /**
-     * @param Config $config
+     * @param ConfigInterface $config
      *
      * @return RedisDriver
      */
-    private function makeRedis(Config $config): RedisDriver
+    private function makeRedis(ConfigInterface $config): RedisDriver
     {
         $host = $config->get('cache.redis.host', '127.0.0.1');
         $port = $config->get('cache.redis.port', 6379);
