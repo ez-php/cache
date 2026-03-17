@@ -7,7 +7,7 @@ Cache module for the [ez-php framework](https://github.com/ez-php/framework) —
 ## Requirements
 
 - PHP 8.5+
-- ez-php/framework ^1.0
+- ez-php/framework 0.*
 - ext-redis (for Redis driver)
 
 ## Installation
