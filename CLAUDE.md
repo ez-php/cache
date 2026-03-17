@@ -164,7 +164,9 @@ tests/
 ├── ArrayDriverTest.php        — Full CacheInterface contract + flush tested against ArrayDriver
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis
-└── CacheServiceProviderTest.php — Verifies driver selection from config
+├── Cache/
+│   └── ApplicationTestCase.php — Extends EzPhp\Testing\ApplicationTestCase; overrides getBasePath() to write config/cache.php that reads CACHE_* env vars at require-time
+└── CacheServiceProviderTest.php — Verifies driver selection from config; extends Tests\Cache\ApplicationTestCase
 ```
 
 ---
