@@ -50,4 +50,9 @@ interface CacheInterface
      * @param int               $ttl      Seconds until expiry; 0 means never expire.
      */
     public function remember(string $key, int $ttl, Closure $callback): mixed;
+
+    /**
+     * Remove all items from the cache.
+     */
+    public function flush(): void;
 }

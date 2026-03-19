@@ -184,8 +184,7 @@ The single contract all drivers implement.
 | `forget` | `forget(string $key): void` | Removes an entry; no-op if absent |
 | `has` | `has(string $key): bool` | `true` only if key exists **and** has not expired |
 | `remember` | `remember(string $key, int $ttl, Closure $callback): mixed` | Returns cached value on hit; calls `$callback`, stores, and returns result on miss |
-
-All drivers also expose `flush(): void` (not on the interface — it is driver-specific).
+| `flush` | `flush(): void` | Removes all items from the cache |
 
 ---
 
@@ -242,7 +241,7 @@ Unknown driver values fall back to `ArrayDriver`.
 
 ## Design Decisions and Constraints
 
-- **`flush()` is not on the interface** — Flushing semantics differ per driver (in-memory vs. filesystem glob vs. Redis `FLUSHDB`). Including it on the interface would force all drivers to expose a potentially destructive operation on a shared resource. Call `flush()` by casting to the concrete type when needed.
+- **`flush()` is on the interface** — All three drivers implement it; the operation is part of the cache contract. Callers holding a `CacheInterface` reference can flush without an unsafe cast. Note that `RedisDriver::flush()` calls `Redis::flushDB()` — it clears the entire selected database, not just this module's keys. Use a dedicated database index (`cache.redis.database`) to isolate cache data.
 - **MD5 filenames in FileDriver** — Keys may contain characters unsafe for filenames. MD5 is not cryptographic here; it is a deterministic, fixed-length, filesystem-safe encoding. Collision risk is negligible for cache keys.
 - **`ext-redis`, not Predis** — The native extension is faster and has no PHP dependencies. Applications that cannot install the extension should use `FileDriver`.
 - **No key prefixing** — This module does not namespace keys. If multiple applications share a Redis database or cache directory, key collisions are the application's responsibility (use `cache.redis.database` or set a `cache.file_path` per application).
