@@ -16,24 +16,47 @@ use Closure;
  */
 final class ArrayDriver implements CacheInterface
 {
+    use TaggableDriverTrait;
+
     /** @var array<string, array{value: mixed, expires: int|null}> */
     private array $store = [];
+
+    private int $hits = 0;
+
+    private int $misses = 0;
 
     /**
      * Retrieve an item from the cache.
      * Returns $default when the key is missing or expired.
+     *
+     * @param string $key
+     * @param mixed  $default
+     *
+     * @return mixed
      */
     public function get(string $key, mixed $default = null): mixed
     {
         $entry = $this->read($key);
 
-        return $entry !== null ? $entry['value'] : $default;
+        if ($entry !== null) {
+            $this->hits++;
+
+            return $entry['value'];
+        }
+
+        $this->misses++;
+
+        return $default;
     }
 
     /**
      * Store an item in the cache.
      *
-     * @param int $ttl Seconds until expiry; 0 means never expire.
+     * @param string $key
+     * @param mixed  $value
+     * @param int    $ttl  Seconds until expiry; 0 means never expire.
+     *
+     * @return void
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
@@ -45,6 +68,10 @@ final class ArrayDriver implements CacheInterface
 
     /**
      * Remove an item from the cache.
+     *
+     * @param string $key
+     *
+     * @return void
      */
     public function forget(string $key): void
     {
@@ -53,6 +80,10 @@ final class ArrayDriver implements CacheInterface
 
     /**
      * Return true if the key exists and has not expired.
+     *
+     * @param string $key
+     *
+     * @return bool
      */
     public function has(string $key): bool
     {
@@ -62,16 +93,23 @@ final class ArrayDriver implements CacheInterface
     /**
      * Retrieve an item from the cache, or compute and store it.
      *
+     * @param string           $key
+     * @param int              $ttl      Seconds until expiry; 0 means never expire.
      * @param Closure(): mixed $callback Called only on a cache miss.
-     * @param int               $ttl      Seconds until expiry; 0 means never expire.
+     *
+     * @return mixed
      */
     public function remember(string $key, int $ttl, Closure $callback): mixed
     {
         $entry = $this->read($key);
 
         if ($entry !== null) {
+            $this->hits++;
+
             return $entry['value'];
         }
+
+        $this->misses++;
 
         $value = $callback();
         $this->set($key, $value, $ttl);
@@ -81,10 +119,35 @@ final class ArrayDriver implements CacheInterface
 
     /**
      * Remove all items from the cache.
+     *
+     * @return void
      */
     public function flush(): void
     {
         $this->store = [];
+    }
+
+    /**
+     * Acquire a non-blocking lock for the given key.
+     *
+     * @param string $key
+     * @param int    $ttl
+     *
+     * @return LockInterface
+     */
+    public function lock(string $key, int $ttl = 0): LockInterface
+    {
+        return new ArrayLock($key, $ttl);
+    }
+
+    /**
+     * Return hit/miss statistics for this driver instance.
+     *
+     * @return CacheStats
+     */
+    public function stats(): CacheStats
+    {
+        return new CacheStats($this->hits, $this->misses);
     }
 
     /** @return array{value: mixed}|null */

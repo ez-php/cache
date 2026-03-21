@@ -21,6 +21,32 @@ use Closure;
 interface CacheInterface
 {
     /**
+     * Acquire a non-blocking lock for the given key.
+     *
+     * @param string $key The lock key.
+     * @param int    $ttl Seconds until the lock expires; 0 means never expire.
+     *
+     * @return LockInterface
+     */
+    public function lock(string $key, int $ttl = 0): LockInterface;
+
+    /**
+     * Return a TaggedCache scoped to the given tag(s).
+     *
+     * @param string|list<string> $tags
+     *
+     * @return TaggedCache
+     */
+    public function tags(string|array $tags): TaggedCache;
+
+    /**
+     * Return hit/miss statistics for this driver instance.
+     *
+     * @return CacheStats
+     */
+    public function stats(): CacheStats;
+
+    /**
      * Retrieve an item from the cache.
      * Returns $default when the key is missing or expired.
      */

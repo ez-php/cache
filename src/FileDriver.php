@@ -16,15 +16,25 @@ use RuntimeException;
  *
  * @package EzPhp\Cache
  */
-final readonly class FileDriver implements CacheInterface
+final class FileDriver implements CacheInterface
 {
+    use TaggableDriverTrait;
+
+    private readonly string $directory;
+
+    private int $hits = 0;
+
+    private int $misses = 0;
+
     /**
      * FileDriver Constructor
      *
      * @param string $directory
      */
-    public function __construct(private string $directory)
+    public function __construct(string $directory)
     {
+        $this->directory = $directory;
+
         if (!is_dir($this->directory) && !mkdir($this->directory, 0o755, true)) {
             throw new RuntimeException("Cannot create cache directory: $this->directory");
         }
@@ -40,7 +50,15 @@ final readonly class FileDriver implements CacheInterface
     {
         $entry = $this->read($key);
 
-        return $entry !== null ? $entry['value'] : $default;
+        if ($entry !== null) {
+            $this->hits++;
+
+            return $entry['value'];
+        }
+
+        $this->misses++;
+
+        return $default;
     }
 
     /**
@@ -85,9 +103,9 @@ final readonly class FileDriver implements CacheInterface
     }
 
     /**
-     * @param string   $key
-     * @param int      $ttl
-     * @param Closure $callback
+     * @param string           $key
+     * @param int              $ttl
+     * @param Closure(): mixed $callback
      *
      * @return mixed
      */
@@ -96,8 +114,12 @@ final readonly class FileDriver implements CacheInterface
         $entry = $this->read($key);
 
         if ($entry !== null) {
+            $this->hits++;
+
             return $entry['value'];
         }
+
+        $this->misses++;
 
         $value = $callback();
         $this->set($key, $value, $ttl);
@@ -107,12 +129,37 @@ final readonly class FileDriver implements CacheInterface
 
     /**
      * Delete all cache files from the directory.
+     *
+     * @return void
      */
     public function flush(): void
     {
         foreach (glob($this->directory . DIRECTORY_SEPARATOR . '*.cache') ?: [] as $file) {
             unlink($file);
         }
+    }
+
+    /**
+     * Acquire a non-blocking file lock for the given key.
+     *
+     * @param string $key
+     * @param int    $ttl
+     *
+     * @return LockInterface
+     */
+    public function lock(string $key, int $ttl = 0): LockInterface
+    {
+        return new FileLock($this->directory . DIRECTORY_SEPARATOR . md5($key) . '.lock', $ttl);
+    }
+
+    /**
+     * Return hit/miss statistics for this driver instance.
+     *
+     * @return CacheStats
+     */
+    public function stats(): CacheStats
+    {
+        return new CacheStats($this->hits, $this->misses);
     }
 
     /**

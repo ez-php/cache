@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace EzPhp\Cache;
 
+use Closure;
 use Redis;
 use RuntimeException;
 
@@ -15,9 +16,15 @@ use RuntimeException;
  *
  * @package EzPhp\Cache
  */
-final readonly class RedisDriver implements CacheInterface
+final class RedisDriver implements CacheInterface
 {
+    use TaggableDriverTrait;
+
     private Redis $redis;
+
+    private int $hits = 0;
+
+    private int $misses = 0;
 
     /**
      * RedisDriver Constructor
@@ -54,8 +61,12 @@ final readonly class RedisDriver implements CacheInterface
         $raw = $this->redis->get($key);
 
         if (!is_string($raw)) {
+            $this->misses++;
+
             return $default;
         }
+
+        $this->hits++;
 
         $value = unserialize($raw);
 
@@ -101,21 +112,24 @@ final readonly class RedisDriver implements CacheInterface
     }
 
     /**
-     * @param string   $key
-     * @param int      $ttl
-     * @param \Closure $callback
+     * @param string           $key
+     * @param int              $ttl
+     * @param Closure(): mixed $callback
      *
      * @return mixed
      */
-    public function remember(string $key, int $ttl, \Closure $callback): mixed
+    public function remember(string $key, int $ttl, Closure $callback): mixed
     {
         $raw = $this->redis->get($key);
 
         if (is_string($raw)) {
+            $this->hits++;
             $value = unserialize($raw);
 
             return $value;
         }
+
+        $this->misses++;
 
         $value = $callback();
         $this->set($key, $value, $ttl);
@@ -125,9 +139,34 @@ final readonly class RedisDriver implements CacheInterface
 
     /**
      * Flush the entire currently selected Redis database.
+     *
+     * @return void
      */
     public function flush(): void
     {
         $this->redis->flushDB();
+    }
+
+    /**
+     * Acquire a non-blocking Redis lock for the given key.
+     *
+     * @param string $key
+     * @param int    $ttl
+     *
+     * @return LockInterface
+     */
+    public function lock(string $key, int $ttl = 0): LockInterface
+    {
+        return new RedisLock($this->redis, $key, $ttl);
+    }
+
+    /**
+     * Return hit/miss statistics for this driver instance.
+     *
+     * @return CacheStats
+     */
+    public function stats(): CacheStats
+    {
+        return new CacheStats($this->hits, $this->misses);
     }
 }
