@@ -15,9 +15,9 @@ use RuntimeException;
  *
  * @package EzPhp\Cache
  */
-final class RedisDriver implements CacheInterface
+final readonly class RedisDriver implements CacheInterface
 {
-    private readonly Redis $redis;
+    private Redis $redis;
 
     /**
      * RedisDriver Constructor

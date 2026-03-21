@@ -16,14 +16,14 @@ use RuntimeException;
  *
  * @package EzPhp\Cache
  */
-final class FileDriver implements CacheInterface
+final readonly class FileDriver implements CacheInterface
 {
     /**
      * FileDriver Constructor
      *
      * @param string $directory
      */
-    public function __construct(private readonly string $directory)
+    public function __construct(private string $directory)
     {
         if (!is_dir($this->directory) && !mkdir($this->directory, 0o755, true)) {
             throw new RuntimeException("Cannot create cache directory: $this->directory");

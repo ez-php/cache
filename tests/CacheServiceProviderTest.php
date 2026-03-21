@@ -40,6 +40,8 @@ final class CacheServiceProviderTest extends ApplicationTestCase
     }
 
     /**
+     * @param Application $app
+     *
      * @return void
      */
     protected function configureApplication(Application $app): void
@@ -70,6 +72,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_default_driver_is_array(): void
     {
@@ -78,6 +81,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_file_driver_is_created_when_configured(): void
     {
@@ -90,6 +94,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_cache_set_and_get_via_container(): void
     {
@@ -101,6 +106,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_redis_driver_is_created_when_configured(): void
     {
