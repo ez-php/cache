@@ -43,7 +43,16 @@ final class RedisDriver implements CacheInterface
         }
 
         $this->redis = new Redis();
-        $this->redis->connect($host, $port);
+
+        try {
+            $connected = @$this->redis->connect($host, $port);
+        } catch (\RedisException $e) {
+            throw new RuntimeException("Redis connection failed: {$e->getMessage()}", previous: $e);
+        }
+
+        if (!$connected) {
+            throw new RuntimeException("Redis connection failed: could not connect to {$host}:{$port}.");
+        }
 
         if ($database !== 0) {
             $this->redis->select($database);
