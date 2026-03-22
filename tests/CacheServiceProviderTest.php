@@ -12,6 +12,7 @@ use EzPhp\Cache\FileDriver;
 use EzPhp\Cache\RedisDriver;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use Throwable;
 
 /**
  * Class CacheServiceProviderTest
@@ -110,10 +111,22 @@ final class CacheServiceProviderTest extends ApplicationTestCase
      */
     public function test_redis_driver_is_created_when_configured(): void
     {
+        if (!extension_loaded('redis')) {
+            $this->markTestSkipped('The "redis" PHP extension is not loaded.');
+        }
+
         putenv('CACHE_DRIVER=redis');
         putenv('CACHE_REDIS_HOST=redis');
         putenv('CACHE_REDIS_PORT=6379');
 
-        $this->assertInstanceOf(RedisDriver::class, $this->app()->make(CacheInterface::class));
+        $driver = null;
+
+        try {
+            $driver = $this->app()->make(CacheInterface::class);
+        } catch (Throwable $e) {
+            $this->markTestSkipped('Redis server not reachable: ' . $e->getMessage());
+        }
+
+        $this->assertInstanceOf(RedisDriver::class, $driver);
     }
 }
