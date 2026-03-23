@@ -2,6 +2,12 @@
 
 All notable changes to `ez-php/cache` are documented here.
 
+## [v0.8.5] — 2026-03-23
+
+### Documentation
+- Update CHANGELOG for v0.8.4 [skip ci] (9567512)
+
+
 ## [v0.8.4] — 2026-03-22
 
 ### Documentation
