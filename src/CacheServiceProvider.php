@@ -13,7 +13,7 @@ use EzPhp\Contracts\ServiceProvider;
  *
  * Binds CacheInterface to the driver configured via config/cache.php.
  *
- * Supported drivers: array, file, redis
+ * Supported drivers: array, file, redis, memcached
  * Default: array
  *
  * @package EzPhp\Cache
@@ -31,9 +31,10 @@ final class CacheServiceProvider extends ServiceProvider
             $driver = is_string($driver) ? $driver : 'array';
 
             return match ($driver) {
-                'file' => $this->makeFile($config),
-                'redis' => $this->makeRedis($config),
-                default => new ArrayDriver(),
+                'file'      => $this->makeFile($config),
+                'redis'     => $this->makeRedis($config),
+                'memcached' => $this->makeMemcached($config),
+                default     => new ArrayDriver(),
             };
         });
     }
@@ -66,5 +67,25 @@ final class CacheServiceProvider extends ServiceProvider
             is_int($port) ? $port : 6379,
             is_int($db) ? $db : 0,
         );
+    }
+
+    /**
+     * @param ConfigInterface $config
+     *
+     * @return MemcachedDriver
+     */
+    private function makeMemcached(ConfigInterface $config): MemcachedDriver
+    {
+        $host   = $config->get('cache.memcached.host', '127.0.0.1');
+        $port   = $config->get('cache.memcached.port', 11211);
+        $weight = $config->get('cache.memcached.weight', 0);
+
+        return new MemcachedDriver([
+            [
+                'host'   => is_string($host) ? $host : '127.0.0.1',
+                'port'   => is_int($port) ? $port : 11211,
+                'weight' => is_int($weight) ? $weight : 0,
+            ],
+        ]);
     }
 }

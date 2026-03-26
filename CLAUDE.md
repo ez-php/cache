@@ -164,17 +164,27 @@ Array, file, and Redis cache drivers for ez-php applications.
 
 ```
 src/
-├── CacheInterface.php         — Unified contract for all drivers: get/set/forget/has/remember
+├── CacheInterface.php         — Unified contract for all drivers: get/set/forget/has/remember/lock/tags/stats
 ├── ArrayDriver.php            — In-memory driver; data lives for the request lifetime only
 ├── FileDriver.php             — Filesystem driver; serialised entries keyed by MD5 filename
-├── RedisDriver.php            — Redis driver via ext-redis; serialised values, native TTL
+├── RedisDriver.php            — Redis driver via ext-redis; serialised values, native TTL; RedisLock support
+├── MemcachedDriver.php        — Memcached driver via ext-memcached; serialised values; MemcachedLock support
+├── RedisLock.php              — LockInterface impl using Redis SET NX
+├── MemcachedLock.php          — LockInterface impl using Memcached::add() (add-if-not-exists)
+├── ArrayLock.php              — LockInterface impl backed by in-process array (for ArrayDriver)
+├── FileLock.php               — LockInterface impl using advisory file locks (flock)
+├── TaggableDriverTrait.php    — Provides tags() → TaggedCache for all drivers
+├── TaggedCache.php            — Scoped cache view: all keys prefixed with tag hash
+├── CacheStats.php             — Immutable value object: hits, misses
+├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
 └── CacheServiceProvider.php   — Reads config/cache.php and binds CacheInterface to the chosen driver
 
 tests/
 ├── TestCase.php               — Base PHPUnit test case
 ├── ArrayDriverTest.php        — Full CacheInterface contract + flush tested against ArrayDriver
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
-├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis
+├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
+├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')])
 ├── Cache/
 │   └── ApplicationTestCase.php — Extends EzPhp\Testing\ApplicationTestCase; overrides getBasePath() to write config/cache.php that reads CACHE_* env vars at require-time
 └── CacheServiceProviderTest.php — Verifies driver selection from config; extends Tests\Cache\ApplicationTestCase
@@ -234,17 +244,32 @@ Redis store via the PHP `ext-redis` extension. Throws `RuntimeException` at cons
 
 ---
 
+### MemcachedDriver (`src/MemcachedDriver.php`)
+
+Memcached store via the PHP `ext-memcached` extension. Throws `RuntimeException` at construction if the extension is not loaded.
+
+- Accepts a list of server configs: `[['host' => '...', 'port' => 11211, 'weight' => 0]]`
+- Uses `Memcached::SERIALIZER_PHP` so any serialisable type is supported
+- TTL 0 = no expiry; TTL > 0 = N seconds; TTL < 0 = stored with TTL=1 (evicted almost immediately)
+- `flush()` calls `Memcached::flush()` — clears the **entire connected server**, not just this module's keys
+- Lock via `MemcachedLock` using `Memcached::add()` (atomic add-if-not-exists)
+
+---
+
 ### CacheServiceProvider (`src/CacheServiceProvider.php`)
 
 Reads `config/cache.php` and binds `CacheInterface` lazily to the matching driver.
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `cache.driver` | string | `'array'` | `'array'`, `'file'`, or `'redis'` |
+| `cache.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, or `'memcached'` |
 | `cache.file_path` | string | `sys_get_temp_dir() . '/ez-cache'` | Directory for FileDriver |
 | `cache.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `cache.redis.port` | int | `6379` | Redis port |
 | `cache.redis.database` | int | `0` | Redis database index |
+| `cache.memcached.host` | string | `'127.0.0.1'` | Memcached hostname |
+| `cache.memcached.port` | int | `11211` | Memcached port |
+| `cache.memcached.weight` | int | `0` | Server weight (0 = equal weight) |
 
 Unknown driver values fall back to `ArrayDriver`.
 
