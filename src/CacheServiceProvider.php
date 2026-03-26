@@ -31,10 +31,10 @@ final class CacheServiceProvider extends ServiceProvider
             $driver = is_string($driver) ? $driver : 'array';
 
             return match ($driver) {
-                'file'      => $this->makeFile($config),
-                'redis'     => $this->makeRedis($config),
+                'file' => $this->makeFile($config),
+                'redis' => $this->makeRedis($config),
                 'memcached' => $this->makeMemcached($config),
-                default     => new ArrayDriver(),
+                default => new ArrayDriver(),
             };
         });
     }
@@ -76,14 +76,14 @@ final class CacheServiceProvider extends ServiceProvider
      */
     private function makeMemcached(ConfigInterface $config): MemcachedDriver
     {
-        $host   = $config->get('cache.memcached.host', '127.0.0.1');
-        $port   = $config->get('cache.memcached.port', 11211);
+        $host = $config->get('cache.memcached.host', '127.0.0.1');
+        $port = $config->get('cache.memcached.port', 11211);
         $weight = $config->get('cache.memcached.weight', 0);
 
         return new MemcachedDriver([
             [
-                'host'   => is_string($host) ? $host : '127.0.0.1',
-                'port'   => is_int($port) ? $port : 11211,
+                'host' => is_string($host) ? $host : '127.0.0.1',
+                'port' => is_int($port) ? $port : 11211,
                 'weight' => is_int($weight) ? $weight : 0,
             ],
         ]);
