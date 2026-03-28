@@ -46,6 +46,12 @@ final class MemcachedDriverTest extends TestCase
         try {
             $this->cache = new MemcachedDriver([['host' => self::HOST, 'port' => self::PORT]]);
             $this->cache->flush();
+            // Memcached connections are lazy — flush() never throws even when the server
+            // is down. Do a real round-trip to confirm reachability.
+            $this->cache->set('__probe__', true);
+            if ($this->cache->get('__probe__') !== true) {
+                $this->markTestSkipped('Memcached server at ' . self::HOST . ':' . self::PORT . ' is not reachable.');
+            }
         } catch (Throwable $e) {
             $this->markTestSkipped('Memcached not reachable: ' . $e->getMessage());
         }
