@@ -200,6 +200,65 @@ final class ArrayDriverTest extends TestCase
         $this->assertFalse($this->cache->has('b'));
     }
 
+    // ─── increment / decrement ───────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_increment_creates_key_with_zero_plus_amount(): void
+    {
+        $result = $this->cache->increment('counter');
+
+        $this->assertSame(1, $result);
+        $this->assertSame(1, $this->cache->get('counter'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_increment_by_custom_amount(): void
+    {
+        $this->cache->increment('counter', 5);
+        $result = $this->cache->increment('counter', 3);
+
+        $this->assertSame(8, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_increment_on_existing_key(): void
+    {
+        $this->cache->set('counter', 10);
+
+        $result = $this->cache->increment('counter');
+
+        $this->assertSame(11, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_creates_key_with_zero_minus_amount(): void
+    {
+        $result = $this->cache->decrement('counter');
+
+        $this->assertSame(-1, $result);
+        $this->assertSame(-1, $this->cache->get('counter'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_by_custom_amount(): void
+    {
+        $this->cache->set('counter', 10);
+
+        $result = $this->cache->decrement('counter', 3);
+
+        $this->assertSame(7, $result);
+    }
+
     // ─── implements interface ─────────────────────────────────────────────────
 
     /**

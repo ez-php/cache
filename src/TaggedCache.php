@@ -163,6 +163,32 @@ final class TaggedCache implements CacheInterface
     }
 
     /**
+     * Increment a numeric value, delegating to the underlying driver.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function increment(string $key, int $amount = 1): int
+    {
+        return $this->driver->increment($key, $amount);
+    }
+
+    /**
+     * Decrement a numeric value, delegating to the underlying driver.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function decrement(string $key, int $amount = 1): int
+    {
+        return $this->driver->decrement($key, $amount);
+    }
+
+    /**
      * Return cache statistics from the underlying driver.
      *
      * @return CacheStats

@@ -247,6 +247,53 @@ final class FileDriverTest extends TestCase
         rmdir($newDir);
     }
 
+    // ─── increment / decrement ───────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_increment_creates_key_and_returns_new_value(): void
+    {
+        $result = $this->cache->increment('counter');
+
+        $this->assertSame(1, $result);
+        $this->assertSame(1, $this->cache->get('counter'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_increment_on_existing_key(): void
+    {
+        $this->cache->set('counter', 10);
+
+        $result = $this->cache->increment('counter', 5);
+
+        $this->assertSame(15, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_creates_key_and_returns_new_value(): void
+    {
+        $result = $this->cache->decrement('counter');
+
+        $this->assertSame(-1, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_on_existing_key(): void
+    {
+        $this->cache->set('counter', 10);
+
+        $result = $this->cache->decrement('counter', 3);
+
+        $this->assertSame(7, $result);
+    }
+
     // ─── implements interface ─────────────────────────────────────────────────
 
     /**

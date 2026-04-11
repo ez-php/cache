@@ -162,6 +162,48 @@ final class MemcachedDriver implements CacheInterface
     }
 
     /**
+     * Increment a numeric value. Creates the key (starting at 0) if absent.
+     *
+     * Read-modify-write — Memcached stores values via the PHP serialiser,
+     * so native increment is not compatible with values written by set().
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function increment(string $key, int $amount = 1): int
+    {
+        $raw = $this->get($key, 0);
+        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
+        $new = $current + $amount;
+        $this->set($key, $new);
+
+        return $new;
+    }
+
+    /**
+     * Decrement a numeric value. Creates the key (starting at 0) if absent.
+     *
+     * Read-modify-write — Memcached stores values via the PHP serialiser,
+     * so native decrement is not compatible with values written by set().
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function decrement(string $key, int $amount = 1): int
+    {
+        $raw = $this->get($key, 0);
+        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
+        $new = $current - $amount;
+        $this->set($key, $new);
+
+        return $new;
+    }
+
+    /**
      * Acquire a non-blocking Memcached lock for the given key.
      *
      * @param string $key

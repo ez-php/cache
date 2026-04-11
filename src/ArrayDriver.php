@@ -128,6 +128,44 @@ final class ArrayDriver implements CacheInterface
     }
 
     /**
+     * Increment a numeric value. Creates the key (starting at 0) if absent.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function increment(string $key, int $amount = 1): int
+    {
+        $entry = $this->read($key);
+        $raw = $entry !== null ? $entry['value'] : 0;
+        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
+        $new = $current + $amount;
+        $this->set($key, $new);
+
+        return $new;
+    }
+
+    /**
+     * Decrement a numeric value. Creates the key (starting at 0) if absent.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function decrement(string $key, int $amount = 1): int
+    {
+        $entry = $this->read($key);
+        $raw = $entry !== null ? $entry['value'] : 0;
+        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
+        $new = $current - $amount;
+        $this->set($key, $new);
+
+        return $new;
+    }
+
+    /**
      * Acquire a non-blocking lock for the given key.
      *
      * @param string $key

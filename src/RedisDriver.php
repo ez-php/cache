@@ -157,6 +157,42 @@ final class RedisDriver implements CacheInterface
     }
 
     /**
+     * Atomically increment a counter key using Redis INCRBY.
+     *
+     * Creates the key (initialised to 0) if absent. Note: this method
+     * operates on raw Redis integer keys and is NOT compatible with keys
+     * created via set() (which serialises values). Use increment/decrement
+     * exclusively for counter keys.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function increment(string $key, int $amount = 1): int
+    {
+        return (int) $this->redis->incrBy($key, $amount);
+    }
+
+    /**
+     * Atomically decrement a counter key using Redis DECRBY.
+     *
+     * Creates the key (initialised to 0) if absent. Note: this method
+     * operates on raw Redis integer keys and is NOT compatible with keys
+     * created via set() (which serialises values). Use increment/decrement
+     * exclusively for counter keys.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int
+     */
+    public function decrement(string $key, int $amount = 1): int
+    {
+        return (int) $this->redis->decrBy($key, $amount);
+    }
+
+    /**
      * Acquire a non-blocking Redis lock for the given key.
      *
      * @param string $key

@@ -225,6 +225,50 @@ final class RedisDriverTest extends TestCase
         $this->assertFalse($this->cache->has('b'));
     }
 
+    // ─── increment / decrement ───────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_increment_creates_counter_from_zero(): void
+    {
+        $result = $this->cache->increment('counter');
+
+        $this->assertSame(1, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_increment_by_custom_amount(): void
+    {
+        $this->cache->increment('counter', 5);
+        $result = $this->cache->increment('counter', 3);
+
+        $this->assertSame(8, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_creates_counter_from_zero(): void
+    {
+        $result = $this->cache->decrement('counter');
+
+        $this->assertSame(-1, $result);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_decrement_by_custom_amount(): void
+    {
+        $this->cache->increment('counter', 10);
+        $result = $this->cache->decrement('counter', 3);
+
+        $this->assertSame(7, $result);
+    }
+
     // ─── implements interface ─────────────────────────────────────────────────
 
     /**

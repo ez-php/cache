@@ -81,4 +81,30 @@ interface CacheInterface
      * Remove all items from the cache.
      */
     public function flush(): void;
+
+    /**
+     * Atomically increment a numeric value in the cache.
+     *
+     * Creates the key with a starting value of 0 when absent, then adds $amount.
+     * Redis: uses native INCRBY (atomic). File/Array/Memcached: read-modify-write.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int The new value after incrementing.
+     */
+    public function increment(string $key, int $amount = 1): int;
+
+    /**
+     * Atomically decrement a numeric value in the cache.
+     *
+     * Creates the key with a starting value of 0 when absent, then subtracts $amount.
+     * Redis: uses native DECRBY (atomic). File/Array/Memcached: read-modify-write.
+     *
+     * @param string $key
+     * @param int    $amount
+     *
+     * @return int The new value after decrementing.
+     */
+    public function decrement(string $key, int $amount = 1): int;
 }
