@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace EzPhp\Cache;
 
 use Closure;
-use RuntimeException;
 
 /**
  * Class FileDriver
@@ -29,14 +28,18 @@ final class FileDriver implements CacheInterface
     /**
      * FileDriver Constructor
      *
-     * @param string $directory
+     * @param string $directory Filesystem path where cache files are stored.
+     * @param string $prefix    Optional filename prefix. When multiple FileDriver
+     *                          instances share a directory, assign a unique prefix per
+     *                          instance so that flush() only removes that instance's files.
+     *                          Defaults to '' (no prefix) for backward compatibility.
      */
-    public function __construct(string $directory)
+    public function __construct(string $directory, private readonly string $prefix = '')
     {
         $this->directory = $directory;
 
-        if (!is_dir($this->directory) && !mkdir($this->directory, 0o755, true)) {
-            throw new RuntimeException("Cannot create cache directory: $this->directory");
+        if (!is_dir($this->directory) && !mkdir($this->directory, 0o700, true)) {
+            throw new CacheException("Cannot create cache directory: $this->directory");
         }
     }
 
@@ -67,7 +70,7 @@ final class FileDriver implements CacheInterface
      * @param int    $ttl
      *
      * @return void
-     * @throws RuntimeException When the cache file cannot be written.
+     * @throws CacheException When the cache file cannot be written.
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
@@ -77,7 +80,7 @@ final class FileDriver implements CacheInterface
         ];
 
         if (file_put_contents($this->path($key), serialize($data), LOCK_EX) === false) {
-            throw new RuntimeException('Cache write failed: ' . $this->path($key));
+            throw new CacheException('Cache write failed: ' . $this->path($key));
         }
     }
 
@@ -137,7 +140,9 @@ final class FileDriver implements CacheInterface
      */
     public function flush(): void
     {
-        foreach (glob($this->directory . DIRECTORY_SEPARATOR . '*.cache') ?: [] as $file) {
+        $pattern = $this->directory . DIRECTORY_SEPARATOR . $this->prefix . '*.cache';
+
+        foreach (glob($pattern) ?: [] as $file) {
             unlink($file);
         }
     }
@@ -150,7 +155,7 @@ final class FileDriver implements CacheInterface
      * @param int    $amount
      *
      * @return int
-     * @throws RuntimeException When the cache file cannot be opened or written.
+     * @throws CacheException When the cache file cannot be opened or written.
      */
     public function increment(string $key, int $amount = 1): int
     {
@@ -165,7 +170,7 @@ final class FileDriver implements CacheInterface
      * @param int    $amount
      *
      * @return int
-     * @throws RuntimeException When the cache file cannot be opened or written.
+     * @throws CacheException When the cache file cannot be opened or written.
      */
     public function decrement(string $key, int $amount = 1): int
     {
@@ -206,7 +211,7 @@ final class FileDriver implements CacheInterface
      * @param int    $delta Amount to add; pass a negative value to decrement.
      *
      * @return int New value after applying the delta.
-     * @throws RuntimeException When the file cannot be opened or written.
+     * @throws CacheException When the file cannot be opened or written.
      */
     private function atomicModify(string $key, int $delta): int
     {
@@ -215,7 +220,7 @@ final class FileDriver implements CacheInterface
         $fp = fopen($path, 'c+');
 
         if ($fp === false) {
-            throw new RuntimeException("Cannot open cache file for atomic operation: $path");
+            throw new CacheException("Cannot open cache file for atomic operation: $path");
         }
 
         $new = 0;
@@ -250,7 +255,7 @@ final class FileDriver implements CacheInterface
             rewind($fp);
 
             if (fwrite($fp, $serialized) === false) {
-                throw new RuntimeException("Cache write failed: $path");
+                throw new CacheException("Cache write failed: $path");
             }
 
             fflush($fp);
@@ -269,7 +274,7 @@ final class FileDriver implements CacheInterface
      */
     private function path(string $key): string
     {
-        return $this->directory . DIRECTORY_SEPARATOR . md5($key) . '.cache';
+        return $this->directory . DIRECTORY_SEPARATOR . $this->prefix . md5($key) . '.cache';
     }
 
     /** @return array{value: mixed}|null */

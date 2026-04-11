@@ -6,7 +6,6 @@ namespace EzPhp\Cache;
 
 use Closure;
 use Redis;
-use RuntimeException;
 
 /**
  * Class RedisDriver
@@ -39,7 +38,7 @@ final class RedisDriver implements CacheInterface
         int $database = 0,
     ) {
         if (!extension_loaded('redis')) {
-            throw new RuntimeException('The "redis" PHP extension is required for the Redis cache driver.');
+            throw new CacheException('The "redis" PHP extension is required for the Redis cache driver.');
         }
 
         $this->redis = new Redis();
@@ -47,11 +46,11 @@ final class RedisDriver implements CacheInterface
         try {
             $connected = @$this->redis->connect($host, $port);
         } catch (\RedisException $e) {
-            throw new RuntimeException("Redis connection failed: {$e->getMessage()}", previous: $e);
+            throw new CacheException("Redis connection failed: {$e->getMessage()}", previous: $e);
         }
 
         if (!$connected) {
-            throw new RuntimeException("Redis connection failed: could not connect to {$host}:{$port}.");
+            throw new CacheException("Redis connection failed: could not connect to {$host}:{$port}.");
         }
 
         if ($database !== 0) {
