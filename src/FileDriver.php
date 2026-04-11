@@ -67,6 +67,7 @@ final class FileDriver implements CacheInterface
      * @param int    $ttl
      *
      * @return void
+     * @throws RuntimeException When the cache file cannot be written.
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
@@ -75,7 +76,9 @@ final class FileDriver implements CacheInterface
             'value' => $value,
         ];
 
-        file_put_contents($this->path($key), serialize($data), LOCK_EX);
+        if (file_put_contents($this->path($key), serialize($data), LOCK_EX) === false) {
+            throw new RuntimeException('Cache write failed: ' . $this->path($key));
+        }
     }
 
     /**
@@ -140,45 +143,33 @@ final class FileDriver implements CacheInterface
     }
 
     /**
-     * Increment a numeric value. Creates the key (starting at 0) if absent.
-     *
-     * Read-modify-write — acceptable for single-process use.
+     * Atomically increment a numeric value using an exclusive file lock.
+     * Creates the key (starting at 0) if absent.
      *
      * @param string $key
      * @param int    $amount
      *
      * @return int
+     * @throws RuntimeException When the cache file cannot be opened or written.
      */
     public function increment(string $key, int $amount = 1): int
     {
-        $entry = $this->read($key);
-        $raw = $entry !== null ? $entry['value'] : 0;
-        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
-        $new = $current + $amount;
-        $this->set($key, $new);
-
-        return $new;
+        return $this->atomicModify($key, $amount);
     }
 
     /**
-     * Decrement a numeric value. Creates the key (starting at 0) if absent.
-     *
-     * Read-modify-write — acceptable for single-process use.
+     * Atomically decrement a numeric value using an exclusive file lock.
+     * Creates the key (starting at 0) if absent.
      *
      * @param string $key
      * @param int    $amount
      *
      * @return int
+     * @throws RuntimeException When the cache file cannot be opened or written.
      */
     public function decrement(string $key, int $amount = 1): int
     {
-        $entry = $this->read($key);
-        $raw = $entry !== null ? $entry['value'] : 0;
-        $current = is_int($raw) ? $raw : (int) (is_scalar($raw) ? $raw : 0);
-        $new = $current - $amount;
-        $this->set($key, $new);
-
-        return $new;
+        return $this->atomicModify($key, -$amount);
     }
 
     /**
@@ -202,6 +193,73 @@ final class FileDriver implements CacheInterface
     public function stats(): CacheStats
     {
         return new CacheStats($this->hits, $this->misses);
+    }
+
+    /**
+     * Atomically read-modify-write a numeric value using an exclusive file lock.
+     *
+     * Opens (or creates) the cache file, acquires LOCK_EX for the entire
+     * read-modify-write sequence, and releases the lock before returning.
+     * This prevents lost updates under concurrent access.
+     *
+     * @param string $key   Cache key.
+     * @param int    $delta Amount to add; pass a negative value to decrement.
+     *
+     * @return int New value after applying the delta.
+     * @throws RuntimeException When the file cannot be opened or written.
+     */
+    private function atomicModify(string $key, int $delta): int
+    {
+        $path = $this->path($key);
+
+        $fp = fopen($path, 'c+');
+
+        if ($fp === false) {
+            throw new RuntimeException("Cannot open cache file for atomic operation: $path");
+        }
+
+        $new = 0;
+
+        try {
+            flock($fp, LOCK_EX);
+
+            $raw = stream_get_contents($fp);
+            $current = 0;
+
+            if ($raw !== false && $raw !== '') {
+                /** @var mixed $data */
+                $data = unserialize($raw, ['allowed_classes' => false]);
+
+                if (is_array($data)
+                    && array_key_exists('expires', $data)
+                    && array_key_exists('value', $data)
+                ) {
+                    $expires = $data['expires'];
+
+                    if (!is_int($expires) || $expires >= time()) {
+                        $val = $data['value'];
+                        $current = is_int($val) ? $val : (int) (is_scalar($val) ? $val : 0);
+                    }
+                }
+            }
+
+            $new = $current + $delta;
+            $serialized = serialize(['expires' => null, 'value' => $new]);
+
+            ftruncate($fp, 0);
+            rewind($fp);
+
+            if (fwrite($fp, $serialized) === false) {
+                throw new RuntimeException("Cache write failed: $path");
+            }
+
+            fflush($fp);
+        } finally {
+            flock($fp, LOCK_UN);
+            fclose($fp);
+        }
+
+        return $new;
     }
 
     /**
