@@ -77,7 +77,8 @@ final class RedisDriver implements CacheInterface
 
         $this->hits++;
 
-        $value = unserialize($raw);
+        /** @var mixed $value */
+        $value = unserialize($raw, ['allowed_classes' => false]);
 
         return $value;
     }
@@ -133,7 +134,8 @@ final class RedisDriver implements CacheInterface
 
         if (is_string($raw)) {
             $this->hits++;
-            $value = unserialize($raw);
+            /** @var mixed $value */
+            $value = unserialize($raw, ['allowed_classes' => false]);
 
             return $value;
         }

@@ -229,7 +229,8 @@ final class FileDriver implements CacheInterface
             return null;
         }
 
-        $data = unserialize($raw);
+        /** @var mixed $data */
+        $data = unserialize($raw, ['allowed_classes' => false]);
 
         if (!is_array($data)
             || !array_key_exists('expires', $data)
