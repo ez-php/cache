@@ -171,6 +171,37 @@ final class RedisDriverTest extends TestCase
         $this->assertNull($this->cache->get('key'));
     }
 
+    /**
+     * Full TTL-keyed storage workflow:
+     * write entry with TTL → read before expiry → confirm gone after expiry.
+     *
+     * Models the JWT blacklist use-case:
+     *   token issued → blacklisted on logout → rejected on next request → allowed after TTL.
+     *
+     * @return void
+     */
+    public function test_ttl_keyed_storage_workflow(): void
+    {
+        $key = 'blacklist:token-abc';
+        $value = 'blacklisted';
+        $ttl = 2; // seconds
+
+        // Step 1: write entry with TTL (simulates logout / blacklist)
+        $this->cache->set($key, $value, $ttl);
+
+        // Step 2: read before expiry — entry must be present with correct value
+        $this->assertTrue($this->cache->has($key));
+        $this->assertSame($value, $this->cache->get($key));
+
+        // Step 3: wait for TTL to elapse
+        sleep($ttl + 1);
+
+        // Step 4: confirm entry is gone after expiry
+        $this->assertFalse($this->cache->has($key));
+        $this->assertNull($this->cache->get($key));
+        $this->assertSame('default', $this->cache->get($key, 'default'));
+    }
+
     // ─── remember ────────────────────────────────────────────────────────────
 
     /**
