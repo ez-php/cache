@@ -165,6 +165,8 @@ Array, file, and Redis cache drivers for ez-php applications.
 ```
 src/
 ├── CacheInterface.php         — Unified contract for all drivers: get/set/forget/has/remember/lock/tags/stats
+├── LockInterface.php          — Contract for distributed/process-level cache locks: acquire/release/get(Closure)
+├── CacheException.php         — Base exception for all cache driver errors (extends RuntimeException)
 ├── ArrayDriver.php            — In-memory driver; data lives for the request lifetime only
 ├── FileDriver.php             — Filesystem driver; serialised entries keyed by MD5 filename
 ├── RedisDriver.php            — Redis driver via ext-redis; serialised values, native TTL; RedisLock support
