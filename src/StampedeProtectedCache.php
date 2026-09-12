@@ -125,7 +125,7 @@ final class StampedeProtectedCache implements CacheInterface
             /** @var float $delta */
             $delta = $meta['delta'];
 
-            $rand = mt_rand(1, mt_getrandmax()) / mt_getrandmax();
+            $rand = random_int(1, mt_getrandmax()) / mt_getrandmax();
             $earlyRefresh = (int) round(microtime(true) - $delta * $this->beta * log($rand)) >= $expiry;
 
             if (!$earlyRefresh) {

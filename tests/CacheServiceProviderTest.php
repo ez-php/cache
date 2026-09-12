@@ -6,6 +6,7 @@ namespace Tests\Cache;
 
 use EzPhp\Application\Application;
 use EzPhp\Cache\ArrayDriver;
+use EzPhp\Cache\Cache;
 use EzPhp\Cache\CacheInterface;
 use EzPhp\Cache\CacheServiceProvider;
 use EzPhp\Cache\FileDriver;
@@ -23,6 +24,7 @@ use Throwable;
 #[UsesClass(ArrayDriver::class)]
 #[UsesClass(FileDriver::class)]
 #[UsesClass(RedisDriver::class)]
+#[UsesClass(Cache::class)]
 final class CacheServiceProviderTest extends ApplicationTestCase
 {
     private string $cacheDir = '';
@@ -36,6 +38,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         putenv('CACHE_PATH=');
         putenv('CACHE_REDIS_HOST=');
         putenv('CACHE_REDIS_PORT=');
+        Cache::resetInstance();
 
         parent::setUp();
     }
@@ -67,6 +70,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         putenv('CACHE_PATH=');
         putenv('CACHE_REDIS_HOST=');
         putenv('CACHE_REDIS_PORT=');
+        Cache::resetInstance();
 
         parent::tearDown();
     }
@@ -128,5 +132,30 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         }
 
         $this->assertInstanceOf(RedisDriver::class, $driver);
+    }
+
+    /**
+     * boot() must wire the Cache facade, but resolution of CacheInterface
+     * must be deferred to the first actual facade call rather than happening
+     * eagerly in boot() — otherwise the container would cache a singleton
+     * built from whatever config existed at bootstrap time, before test code
+     * (or application code) has a chance to configure the driver afterward.
+     *
+     * @return void
+     */
+    public function test_boot_wires_cache_facade_without_eager_resolution(): void
+    {
+        // If this test's own setUp()/bootstrap had already eagerly resolved
+        // CacheInterface (e.g. a regression reintroducing $app->make() in
+        // boot()), setting CACHE_DRIVER here afterward would have no effect
+        // and the facade would still return an ArrayDriver-backed cache.
+        $this->cacheDir = sys_get_temp_dir() . '/ez-cache-facade-' . uniqid();
+        putenv('CACHE_DRIVER=file');
+        putenv('CACHE_PATH=' . $this->cacheDir);
+
+        Cache::set('greeting', 'hello');
+
+        $this->assertSame('hello', Cache::get('greeting'));
+        $this->assertFileExists($this->cacheDir);
     }
 }

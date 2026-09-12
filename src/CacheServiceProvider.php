@@ -40,6 +40,20 @@ final class CacheServiceProvider extends ServiceProvider
     }
 
     /**
+     * Wire the static Cache facade to CacheInterface, deferring actual
+     * resolution to the first facade call (see Cache::setResolver()) rather
+     * than resolving — and thereby permanently caching — the container
+     * binding here in boot(), before the application may have finished
+     * configuring it (e.g. env vars set after bootstrap in some test setups).
+     *
+     * @return void
+     */
+    public function boot(): void
+    {
+        Cache::setResolver(fn (): CacheInterface => $this->app->make(CacheInterface::class));
+    }
+
+    /**
      * @param ConfigInterface $config
      *
      * @return FileDriver

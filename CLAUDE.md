@@ -129,6 +129,14 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
+Pass `--services` to merge MySQL/Redis service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+
+```
+vendor/bin/docker-init --services=mysql
+vendor/bin/docker-init --services=redis
+vendor/bin/docker-init --services=mysql,redis
+```
+
 After scaffolding:
 
 1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis) as needed
@@ -182,7 +190,8 @@ src/
 ├── TaggedCache.php            — Scoped cache view: all keys prefixed with tag hash
 ├── CacheStats.php             — Immutable value object: hits, misses
 ├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
-└── CacheServiceProvider.php   — Reads config/cache.php and binds CacheInterface to the chosen driver
+├── Cache.php                  — Static facade backed by a deferred-resolver singleton; one-line delegations to CacheInterface
+└── CacheServiceProvider.php   — Reads config/cache.php and binds CacheInterface to the chosen driver; wires Cache facade in boot()
 
 tests/
 ├── TestCase.php               — Base PHPUnit test case
@@ -190,9 +199,10 @@ tests/
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')])
+├── CacheTest.php              — Covers Cache facade: delegation of every CacheInterface method, uninitialized throw, reset
 ├── Cache/
 │   └── ApplicationTestCase.php — Extends EzPhp\Testing\ApplicationTestCase; overrides getBasePath() to write config/cache.php that reads CACHE_* env vars at require-time
-└── CacheServiceProviderTest.php — Verifies driver selection from config; extends Tests\Cache\ApplicationTestCase
+└── CacheServiceProviderTest.php — Verifies driver selection from config and deferred facade wiring; extends Tests\Cache\ApplicationTestCase
 ```
 
 ---
@@ -261,6 +271,14 @@ Memcached store via the PHP `ext-memcached` extension. Throws `RuntimeException`
 
 ---
 
+### Cache (`src/Cache.php`)
+
+Static facade following the same pattern as `Broadcast`, `Flag`, `Log`, `Mail`, `Metrics`, and `View`. Every static method (`get`, `set`, `forget`, `has`, `remember`, `flush`, `increment`, `decrement`, `lock`, `tags`, `stats`) is a one-line delegation to the underlying `CacheInterface` — the facade holds no cache state or logic of its own.
+
+Holds `private static ?CacheInterface $instance` plus a deferred `?Closure $resolver`. `setInstance()` sets the instance directly (used by tests). `setResolver()` stores a closure that is invoked — and its result cached — on the *first* actual facade call, not immediately. `CacheServiceProvider::boot()` calls `setResolver()` rather than eagerly resolving `CacheInterface` itself, so that registering the provider does not force the container binding to resolve (and be permanently cached as a singleton) before the application has finished configuring the driver. Throws `RuntimeException` (fail-fast) when neither an instance nor a resolver has been set. `resetInstance()` clears both for test teardown.
+
+---
+
 ### CacheServiceProvider (`src/CacheServiceProvider.php`)
 
 Reads `config/cache.php` and binds `CacheInterface` lazily to the matching driver.
@@ -276,7 +294,7 @@ Reads `config/cache.php` and binds `CacheInterface` lazily to the matching drive
 | `cache.memcached.port` | int | `11211` | Memcached port |
 | `cache.memcached.weight` | int | `0` | Server weight (0 = equal weight) |
 
-Unknown driver values fall back to `ArrayDriver`.
+Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setResolver()` to wire the static facade (see `Cache` above for why resolution is deferred rather than eager).
 
 ---
 
@@ -288,6 +306,7 @@ Unknown driver values fall back to `ArrayDriver`.
 - **No key prefixing** — This module does not namespace keys. If multiple applications share a Redis database or cache directory, key collisions are the application's responsibility (use `cache.redis.database` or set a `cache.file_path` per application).
 - **No tagging or invalidation groups** — Out of scope. Tags belong in a higher-level cache abstraction if needed.
 - **Serialisation in Redis** — `get()` calls `unserialize()` on the raw string. If the value was written outside this driver, the result is undefined. Never mix raw Redis writes with `RedisDriver`.
+- **`Cache` facade resolution is deferred, not eager** — Unlike some other facades in the codebase, `CacheServiceProvider::boot()` does not call `$app->make(CacheInterface::class)` directly. Doing so would resolve — and permanently cache as a container singleton — whatever driver the config happened to select at bootstrap time, before application or test code has a chance to configure it afterward (see `CacheServiceProviderTest`, which sets `CACHE_DRIVER`/`CACHE_PATH` env vars inside individual test methods, after `setUp()`/bootstrap has already run). `Cache::setResolver()` stores a closure instead, resolved only on the first real facade call.
 
 ---
 
@@ -296,6 +315,7 @@ Unknown driver values fall back to `ArrayDriver`.
 - **ArrayDriver and FileDriver** — No external infrastructure. `FileDriverTest` uses `sys_get_temp_dir()` and cleans up via `flush()` in `tearDown`.
 - **RedisDriver** — Requires a live Redis instance (available via Docker). Tests that need Redis are marked or grouped so they can be skipped in environments without the `ext-redis` extension.
 - **Contract tests** — Each driver test covers the full `CacheInterface` contract: get/set/forget/has/remember, TTL expiry, and negative TTL.
+- **`Cache` facade tests** — Use the real `ArrayDriver` as the backing implementation (not a mock) via `Cache::setInstance()`, consistent with this module's general no-mocking-framework approach. Always call `Cache::resetInstance()` in `setUp()`/`tearDown()` of any test touching the facade.
 - **`#[UsesClass]` required** — PHPUnit is configured with `beStrictAboutCoverageMetadata=true`. Declare indirectly used classes with `#[UsesClass]`.
 
 ---
