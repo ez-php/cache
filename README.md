@@ -58,6 +58,16 @@ $result = $cache->remember('key', 60, fn () => expensiveComputation());
 $cache->flush();
 ```
 
+### Increment / decrement
+
+```php
+$cache->increment('page-views');           // 1
+$cache->increment('page-views', 5);        // 6
+$cache->decrement('stock:sku-42', 2);      // creates the key at 0 if absent, then subtracts
+```
+
+Both are atomic (Redis: native `INCRBY`/`DECRBY`; File/Array/Memcached: read-modify-write) and create the key with a starting value of 0 when it does not already exist.
+
 ### Tagging
 
 ```php
@@ -101,7 +111,7 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 
 | Class | Description |
 |---|---|
-| `CacheInterface` | Unified contract: `get`, `set`, `forget`, `has`, `remember`, `flush` |
+| `CacheInterface` | Unified contract: `get`, `set`, `forget`, `has`, `remember`, `flush`, `increment`, `decrement` |
 | `ArrayDriver` | In-memory driver |
 | `FileDriver` | Filesystem driver with MD5-keyed files |
 | `RedisDriver` | Redis driver via `ext-redis`; native TTL |
