@@ -29,16 +29,16 @@ Configure in `config/cache.php`:
 
 ```php
 return [
-    'driver'    => env('CACHE_DRIVER', 'array'), // array | file | redis | memcached
-    'file_path' => storage_path('cache'),
+    'driver'    => getenv('CACHE_DRIVER') ?: 'array', // array | file | redis | memcached
+    'file_path' => getenv('CACHE_PATH') ?: sys_get_temp_dir() . '/ez-cache',
     'redis'     => [
-        'host'     => env('REDIS_HOST', '127.0.0.1'),
-        'port'     => (int) env('REDIS_PORT', 6379),
-        'database' => (int) env('REDIS_DATABASE', 0),
+        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('REDIS_DATABASE') ?: 0),
     ],
     'memcached' => [
-        'host' => env('MEMCACHED_HOST', '127.0.0.1'),
-        'port' => (int) env('MEMCACHED_PORT', 11211),
+        'host' => getenv('MEMCACHED_HOST') ?: '127.0.0.1',
+        'port' => (int) (getenv('MEMCACHED_PORT') ?: 11211),
     ],
 ];
 ```
