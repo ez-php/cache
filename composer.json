@@ -20,6 +20,10 @@
     "php": "^8.5",
     "ez-php/contracts": "^2.0"
   },
+  "suggest": {
+    "ext-redis": "Needed for RedisDriver",
+    "ext-memcached": "Needed for MemcachedDriver"
+  },
   "require-dev": {
     "ez-php/docker": "^2.0",
     "phpunit/phpunit": "^13.0",
