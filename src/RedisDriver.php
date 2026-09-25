@@ -91,6 +91,8 @@ final class RedisDriver implements CacheInterface
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
+        CacheValue::assertStorable($key, $value);
+
         $serialised = serialize($value);
 
         if ($ttl > 0) {

@@ -74,6 +74,8 @@ final class FileDriver implements CacheInterface
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
+        CacheValue::assertStorable($key, $value);
+
         $data = [
             'expires' => $ttl !== 0 ? time() + $ttl : null,
             'value' => $value,

@@ -58,6 +58,16 @@ $result = $cache->remember('key', 60, fn () => expensiveComputation());
 $cache->flush();
 ```
 
+**Values must be `null`, scalars, or (nested) arrays of those.** Every driver throws a
+`CacheException` for objects and resources — the File and Redis drivers restore values with
+`allowed_classes => false`, so an object could never come back intact. Cache a scalar/array
+representation instead and rebuild the object after reading it:
+
+```php
+$cache->set('rate', (string) $decimal, 3600);
+$decimal = BigDecimal::of($cache->get('rate'));
+```
+
 ### Increment / decrement
 
 ```php
@@ -120,6 +130,7 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 | `TaggableDriverTrait` | Provides `tags()` → `TaggedCache` for all drivers |
 | `TaggedCache` | Scoped cache view: keys prefixed with tag hash |
 | `CacheStats` | Immutable value object: hits, misses |
+| `CacheValue` | Value-contract guard used by every driver's `set()`: rejects objects and resources |
 | `StampedeProtectedCache` | Decorator: probabilistic early recompute to prevent stampedes |
 | `CacheServiceProvider` | Config-driven driver binding |
 

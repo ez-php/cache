@@ -148,9 +148,11 @@ php make_module.php <name> --description="..." --services=mysql,redis
 ```
 
 `<name>` is the kebab-case package name; the namespace is derived as
-`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum`,
-`opcache` → `OPCache`, and `dotenv` → `Env` are existing exceptions the guess
-gets wrong; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
+`EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
+overrides it. Existing exceptions the guess gets wrong: `bignum` → `BigNum`,
+`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `oauth` → `OAuth`,
+`opcache` → `OPCache`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
+`websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
 `webauthn-metadata` → `WebauthnMetadata` and `metrics-statsd` → `MetricsStatsd` are
 intentional lower-case-word namespaces, and `testing-application` shares `EzPhp\Testing\`
 with `testing`).
@@ -170,17 +172,21 @@ stub is written only if the submodule doesn't already ship one, so
 `composer guidelines:sync` has a `# Package:` heading to anchor part 1 against.
 
 It writes `modules/<name>/` and registers the module in the four places the monorepo
-needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
-(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+needs it — root `composer.json` (`autoload.psr-4` **and** the shared
+`autoload-dev` `Tests\` directory list), `phpstan.neon`, `phpunit.xml` (test suite
+**and** coverage source), and `packages.sh` (alphabetical position) — in both
+generated and `--repo` mode.
 
 Two things stay manual on purpose:
 
 - **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
   `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
   would recreate the drift the sync script exists to prevent.
-- **The host-port table below** (`--services` only) — editing it marks every
-  `CLAUDE.md` copy as drifted at once, so the next `composer full` would fail for
-  a brand-new module. The generator prints which ports to claim instead.
+- **The host-port table below** (`--services` only) — claim the "next free" row by
+  editing the table in `CODING_GUIDELINES.md` (never in a `CLAUDE.md` copy) and run
+  `composer guidelines:sync` in the same change. Editing it drifts every `CLAUDE.md`
+  until the sync runs, which is why the generator only reminds you instead of doing
+  it. Skipping the edit leaves "next free" stale, so the next module collides.
 
 ### 4 — Docker scaffold
 
@@ -271,6 +277,7 @@ src/
 ├── TaggableDriverTrait.php    — Provides tags() → TaggedCache for all drivers
 ├── TaggedCache.php            — Scoped cache view: all keys prefixed with tag hash
 ├── CacheStats.php             — Immutable value object: hits, misses
+├── CacheValue.php             — assertStorable(): every driver's set() rejects objects/resources (null, scalars, arrays only)
 ├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
 ├── Cache.php                  — Static facade backed by a deferred-resolver singleton; one-line delegations to CacheInterface
 └── CacheServiceProvider.php   — Reads config/cache.php and binds CacheInterface to the chosen driver; wires Cache facade in boot()
@@ -278,6 +285,7 @@ src/
 tests/
 ├── TestCase.php               — Base PHPUnit test case
 ├── ArrayDriverTest.php        — Full CacheInterface contract + flush tested against ArrayDriver
+├── CacheValueTest.php         — Value contract on Array/File/Redis: scalars/arrays round-trip, objects (also nested, also via remember()) and resources rejected
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')])
@@ -387,6 +395,7 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 - **`ext-redis`, not Predis** — The native extension is faster and has no PHP dependencies. Applications that cannot install the extension should use `FileDriver`.
 - **No key prefixing** — This module does not namespace keys. If multiple applications share a Redis database or cache directory, key collisions are the application's responsibility (use `cache.redis.database` or set a `cache.file_path` per application).
 - **No tagging or invalidation groups** — Out of scope. Tags belong in a higher-level cache abstraction if needed.
+- **Values are limited to null, scalars and arrays — on every driver** — `FileDriver`/`RedisDriver` unserialize with `allowed_classes => false` so a tampered cache entry can never instantiate a class; an object would therefore come back as `__PHP_Incomplete_Class` there, while `ArrayDriver` (what the tests use) returned the real object. That mismatch broke `ez-php/exchange`'s `CachingExchangeRateProvider` in production only. `CacheValue::assertStorable()` runs in every driver's `set()` (and therefore `remember()`), so storing an object fails immediately and identically everywhere. Callers cache a scalar/array representation (`BigDecimal::toString()`, `toArray()`) and rebuild the object after reading.
 - **Serialisation in Redis** — `get()` calls `unserialize()` on the raw string. If the value was written outside this driver, the result is undefined. Never mix raw Redis writes with `RedisDriver`.
 - **`Cache` facade resolution is deferred, not eager** — Unlike some other facades in the codebase, `CacheServiceProvider::boot()` does not call `$app->make(CacheInterface::class)` directly. Doing so would resolve — and permanently cache as a container singleton — whatever driver the config happened to select at bootstrap time, before application or test code has a chance to configure it afterward (see `CacheServiceProviderTest`, which sets `CACHE_DRIVER`/`CACHE_PATH` env vars inside individual test methods, after `setUp()`/bootstrap has already run). `Cache::setResolver()` stores a closure instead, resolved only on the first real facade call.
 

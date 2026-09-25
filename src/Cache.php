@@ -121,6 +121,8 @@ final class Cache
      * @param Closure(): mixed $callback
      *
      * @return mixed
+     *
+     * @phpstan-impure
      */
     public static function remember(string $key, int $ttl, Closure $callback): mixed
     {

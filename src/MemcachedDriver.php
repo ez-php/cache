@@ -94,6 +94,8 @@ final class MemcachedDriver implements CacheInterface
      */
     public function set(string $key, mixed $value, int $ttl = 0): void
     {
+        CacheValue::assertStorable($key, $value);
+
         // Negative TTL means "already expired" — store with TTL=1 so Memcached evicts it immediately.
         $expiration = $ttl < 0 ? 1 : $ttl;
 

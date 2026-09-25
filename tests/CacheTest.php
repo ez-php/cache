@@ -83,8 +83,10 @@ final class CacheTest extends TestCase
             return 'computed';
         };
 
-        $this->assertSame('computed', Cache::remember('key', 0, $callback));
-        $this->assertSame('computed', Cache::remember('key', 0, $callback));
+        $miss = Cache::remember('key', 0, $callback);
+        $hit = Cache::remember('key', 0, $callback);
+
+        $this->assertSame(['computed', 'computed'], [$miss, $hit]);
         $this->assertSame(1, $calls, 'callback must only run on the first (miss) call');
     }
 

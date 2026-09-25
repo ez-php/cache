@@ -11,6 +11,9 @@ use Closure;
  *
  * Unified contract for all cache drivers.
  *
+ * Values: only `null`, scalars and (nested) arrays of those — objects and
+ * resources are rejected by every driver (see {@see CacheValue}).
+ *
  * TTL rules:
  *   0   = no expiry (store forever)
  *   > 0 = expire after N seconds
@@ -55,7 +58,12 @@ interface CacheInterface
     /**
      * Store an item in the cache.
      *
+     * Only `null`, scalars and (nested) arrays of those are storable — every
+     * driver rejects objects and resources, see {@see CacheValue}.
+     *
      * @param int $ttl Seconds until expiry; 0 means never expire.
+     *
+     * @throws CacheException When the value contains an object or resource.
      */
     public function set(string $key, mixed $value, int $ttl = 0): void;
 
@@ -74,6 +82,8 @@ interface CacheInterface
      *
      * @param Closure(): mixed $callback Called only on a cache miss.
      * @param int               $ttl      Seconds until expiry; 0 means never expire.
+     *
+     * @phpstan-impure
      */
     public function remember(string $key, int $ttl, Closure $callback): mixed;
 
