@@ -16,12 +16,28 @@ use Redis;
  * automatically released by Redis when the TTL expires, even if the
  * process crashes. When ttl=0 the lock has no expiry (no PX option sent).
  *
+ * The stored value is a random owner token; release() deletes the key only
+ * while it still holds this instance's token (compare-and-delete in one Lua
+ * script), so a holder whose TTL expired can't delete the next holder's lock.
+ *
  * phpredis returns mixed from set(); always compare against true strictly.
  *
  * @package EzPhp\Cache
  */
 final class RedisLock implements LockInterface
 {
+    private const string RELEASE_SCRIPT = <<<'LUA'
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+            return redis.call('DEL', KEYS[1])
+        end
+        return 0
+        LUA;
+
+    /**
+     * Token written by a successful acquire(); null while not held.
+     */
+    private ?string $owner = null;
+
     /**
      * RedisLock Constructor
      *
@@ -44,23 +60,47 @@ final class RedisLock implements LockInterface
      */
     public function acquire(): bool
     {
+        $token = bin2hex(random_bytes(16));
+
         if ($this->ttl > 0) {
-            $result = $this->redis->set($this->key, '1', ['nx', 'px' => $this->ttl * 1000]);
+            $result = $this->redis->set($this->key, $token, ['nx', 'px' => $this->ttl * 1000]);
         } else {
-            $result = $this->redis->set($this->key, '1', ['nx']);
+            $result = $this->redis->set($this->key, $token, ['nx']);
         }
 
-        return $result === true;
+        if ($result !== true) {
+            return false;
+        }
+
+        $this->owner = $token;
+
+        return true;
     }
 
     /**
-     * Release the lock by deleting the Redis key.
+     * Delete the key if it still holds this instance's token.
      *
      * @return void
      */
     public function release(): void
     {
+        if ($this->owner === null) {
+            return;
+        }
+
+        $this->redis->eval(self::RELEASE_SCRIPT, [$this->key, $this->owner], 1);
+        $this->owner = null;
+    }
+
+    /**
+     * Delete the key whoever holds it.
+     *
+     * @return void
+     */
+    public function forceRelease(): void
+    {
         $this->redis->del($this->key);
+        $this->owner = null;
     }
 
     /**

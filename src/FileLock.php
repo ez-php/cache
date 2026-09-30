@@ -15,6 +15,11 @@ use Closure;
  * the lock when the file handle is closed or the process exits.
  * A crashed process will have its lock released automatically by the OS.
  *
+ * Ownership is intrinsic: release() unlocks only this instance's own handle,
+ * and the lock file is never deleted. For the same reason forceRelease() can't
+ * break a flock held by another process — it behaves like release(); the lock
+ * ends when its holder closes the handle or exits.
+ *
  * @package EzPhp\Cache
  */
 final class FileLock implements LockInterface
@@ -86,6 +91,16 @@ final class FileLock implements LockInterface
             fclose($this->handle);
             $this->handle = null;
         }
+    }
+
+    /**
+     * Same as release(): an flock held by another process can't be broken from here.
+     *
+     * @return void
+     */
+    public function forceRelease(): void
+    {
+        $this->release();
     }
 
     /**

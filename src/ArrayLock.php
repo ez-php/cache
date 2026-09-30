@@ -23,11 +23,16 @@ use Closure;
 final class ArrayLock implements LockInterface
 {
     /**
-     * Shared lock registry: key → expiry timestamp (or null for no expiry).
+     * Shared lock registry: key → owner token and expiry timestamp (null = no expiry).
      *
-     * @var array<string, int|null>
+     * @var array<string, array{owner: string, expires: int|null}>
      */
     private static array $locks = [];
+
+    /**
+     * Token of a successful acquire(); null while not held.
+     */
+    private ?string $owner = null;
 
     /**
      * ArrayLock Constructor
@@ -50,26 +55,45 @@ final class ArrayLock implements LockInterface
     public function acquire(): bool
     {
         if (array_key_exists($this->key, self::$locks)) {
-            $expiry = self::$locks[$this->key];
+            $expiry = self::$locks[$this->key]['expires'];
 
             if ($expiry === null || $expiry > time()) {
                 return false;
             }
         }
 
-        self::$locks[$this->key] = $this->ttl !== 0 ? time() + $this->ttl : null;
+        $this->owner = bin2hex(random_bytes(8));
+        self::$locks[$this->key] = [
+            'owner' => $this->owner,
+            'expires' => $this->ttl !== 0 ? time() + $this->ttl : null,
+        ];
 
         return true;
     }
 
     /**
-     * Release the lock by removing it from the registry.
+     * Remove the lock from the registry if this instance still holds it.
      *
      * @return void
      */
     public function release(): void
     {
+        if ($this->owner !== null && (self::$locks[$this->key]['owner'] ?? null) === $this->owner) {
+            unset(self::$locks[$this->key]);
+        }
+
+        $this->owner = null;
+    }
+
+    /**
+     * Remove the lock from the registry whoever holds it.
+     *
+     * @return void
+     */
+    public function forceRelease(): void
+    {
         unset(self::$locks[$this->key]);
+        $this->owner = null;
     }
 
     /**

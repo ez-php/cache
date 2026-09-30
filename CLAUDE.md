@@ -28,10 +28,11 @@ docker compose exec app composer full
 Executes in order:
 1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
 2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
-3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+3. `check_module_deps.php` — fails when a package's code imports an ez-php package its `composer.json` does not declare (module `src`: `require`/`suggest`; tests: `require`/`require-dev` and their dependencies), or requires one it never uses
+4. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+5. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-5. `phpunit` — all tests with coverage
+6. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
@@ -40,6 +41,7 @@ composer cs                  # CS Fixer only
 composer test                # PHPUnit only
 composer guidelines:check    # CLAUDE.md drift only
 composer test-classes:check  # duplicate test class names only
+composer module-deps:check   # undeclared / unused ez-php package dependencies only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -198,20 +200,22 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
 vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
+vendor/bin/docker-init --services=memcached,mailpit
 ```
 
-Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`:
+Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`, `memcached`, `apcu` (with `apc.enable_cli=1`):
 
 ```
 vendor/bin/docker-init --extensions=gmp,bcmath
 vendor/bin/docker-init --extensions=gd,imagick
+vendor/bin/docker-init --extensions=memcached,apcu
 ```
 
 When run from a module directory inside this monorepo, any requested extension not already present is also merged into the shared root `docker/app/Dockerfile` — the container `composer full` at the root actually runs against, distinct from the module's own standalone image.
@@ -268,16 +272,16 @@ Array, file, and Redis cache drivers for ez-php applications.
 ```
 src/
 ├── CacheInterface.php         — Unified contract for all drivers: get/set/forget/has/remember/lock/tags/stats
-├── LockInterface.php          — Contract for distributed/process-level cache locks: acquire/release/get(Closure)
+├── LockInterface.php          — Contract for distributed/process-level cache locks: acquire/release (owner only)/forceRelease/get(Closure)
 ├── CacheException.php         — Base exception for all cache driver errors (extends RuntimeException)
 ├── ArrayDriver.php            — In-memory driver; data lives for the request lifetime only
 ├── FileDriver.php             — Filesystem driver; serialised entries keyed by MD5 filename
 ├── RedisDriver.php            — Redis driver via ext-redis; serialised values, native TTL; RedisLock support
 ├── MemcachedDriver.php        — Memcached driver via ext-memcached; serialised values; MemcachedLock support
-├── RedisLock.php              — LockInterface impl using Redis SET NX
-├── MemcachedLock.php          — LockInterface impl using Memcached::add() (add-if-not-exists)
-├── ArrayLock.php              — LockInterface impl backed by in-process array (for ArrayDriver)
-├── FileLock.php               — LockInterface impl using advisory file locks (flock)
+├── RedisLock.php              — LockInterface impl using Redis SET NX with an owner token; Lua compare-and-delete release
+├── MemcachedLock.php          — LockInterface impl using Memcached::add() with an owner token; cas() release
+├── ArrayLock.php              — LockInterface impl backed by in-process array (for ArrayDriver); owner token per entry
+├── FileLock.php               — LockInterface impl using advisory file locks (flock); ownership is the handle
 ├── TaggableDriverTrait.php    — Provides tags() → TaggedCache for all drivers
 ├── TaggedCache.php            — Scoped cache view: all keys prefixed with tag hash
 ├── CacheStats.php             — Immutable value object: hits, misses
@@ -361,7 +365,7 @@ Memcached store via the PHP `ext-memcached` extension. Throws `RuntimeException`
 - Uses `Memcached::SERIALIZER_PHP` so any serialisable type is supported
 - TTL 0 = no expiry; TTL > 0 = N seconds; TTL < 0 = stored with TTL=1 (evicted almost immediately)
 - `flush()` calls `Memcached::flush()` — clears the **entire connected server**, not just this module's keys
-- Lock via `MemcachedLock` using `Memcached::add()` (atomic add-if-not-exists)
+- Lock via `MemcachedLock` using `Memcached::add()` (atomic add-if-not-exists) with an owner token
 
 ---
 
@@ -394,6 +398,7 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 
 ## Design Decisions and Constraints
 
+- **Locks release only what they own** — `acquire()` stores a random owner token (Redis/Memcached value, `ArrayLock` registry entry); `release()` removes the lock only while it still carries that token — a Lua `GET`+`DEL` script on Redis, `get(GET_EXTENDED)` + `cas()` with a negative expiry (= expire now) on Memcached. Without it, a holder whose TTL ran out deleted the next holder's lock, and a fresh `lock()` object's `release()` deleted any lock. `release()` on an instance that never acquired is a no-op. `forceRelease()` is the explicit owner-less path for hand-offs between processes (`ez-php/queue`'s `CacheJobLock` releasing a `UniqueQueue` lock in the worker). `FileLock` needs no token — a `flock()` belongs to its handle — and for the same reason its `forceRelease()` can't break another process's lock; it acts like `release()`.
 - **`flush()` is on the interface** — All three drivers implement it; the operation is part of the cache contract. Callers holding a `CacheInterface` reference can flush without an unsafe cast. Note that `RedisDriver::flush()` calls `Redis::flushDB()` — it clears the entire selected database, not just this module's keys. Use a dedicated database index (`cache.redis.database`) to isolate cache data.
 - **MD5 filenames in FileDriver** — Keys may contain characters unsafe for filenames. MD5 is not cryptographic here; it is a deterministic, fixed-length, filesystem-safe encoding. Collision risk is negligible for cache keys.
 - **`ext-redis`, not Predis** — The native extension is faster and has no PHP dependencies. Applications that cannot install the extension should use `FileDriver`.

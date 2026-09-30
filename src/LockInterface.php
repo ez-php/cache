@@ -24,11 +24,26 @@ interface LockInterface
     public function acquire(): bool;
 
     /**
-     * Release the lock.
+     * Release the lock — only if this instance acquired it and still holds it.
+     *
+     * A lock whose TTL ran out may meanwhile belong to another holder; release()
+     * leaves that lock alone. Calling it on an instance that never acquired the
+     * lock is a no-op.
      *
      * @return void
      */
     public function release(): void;
+
+    /**
+     * Release the lock regardless of who holds it.
+     *
+     * For a deliberate hand-off where the releasing process is not the one
+     * that acquired the lock (e.g. a queue worker releasing a unique-job lock
+     * the dispatcher took). Prefer release() everywhere else.
+     *
+     * @return void
+     */
+    public function forceRelease(): void;
 
     /**
      * Execute the callback while holding the lock.

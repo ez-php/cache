@@ -16,10 +16,21 @@ use Memcached;
  * per key. TTL > 0 sets a server-side expiry so the lock is automatically
  * released if the process crashes. TTL = 0 means no automatic expiry.
  *
+ * The stored value is a random owner token. release() reads the value with
+ * its CAS id and, only if it is still this instance's token, overwrites it via
+ * cas() with a negative expiry — which expires it at once. The CAS id makes
+ * check and delete atomic: if another holder wrote in between, cas() fails and
+ * that lock stays.
+ *
  * @package EzPhp\Cache
  */
 final class MemcachedLock implements LockInterface
 {
+    /**
+     * Token written by a successful acquire(); null while not held.
+     */
+    private ?string $owner = null;
+
     /**
      * MemcachedLock Constructor
      *
@@ -43,17 +54,47 @@ final class MemcachedLock implements LockInterface
      */
     public function acquire(): bool
     {
-        return $this->memcached->add($this->key, '1', $this->ttl);
+        $token = bin2hex(random_bytes(16));
+
+        if (!$this->memcached->add($this->key, $token, $this->ttl)) {
+            return false;
+        }
+
+        $this->owner = $token;
+
+        return true;
     }
 
     /**
-     * Release the lock by deleting the Memcached key.
+     * Expire the key if it still holds this instance's token (compare-and-swap).
      *
      * @return void
      */
     public function release(): void
     {
+        if ($this->owner === null) {
+            return;
+        }
+
+        $item = $this->memcached->get($this->key, null, Memcached::GET_EXTENDED);
+
+        if (is_array($item) && ($item['value'] ?? null) === $this->owner && is_numeric($item['cas'] ?? null)) {
+            // A negative expiry makes the item expire immediately.
+            $this->memcached->cas((float) $item['cas'], $this->key, $this->owner, -1);
+        }
+
+        $this->owner = null;
+    }
+
+    /**
+     * Delete the key whoever holds it.
+     *
+     * @return void
+     */
+    public function forceRelease(): void
+    {
         $this->memcached->delete($this->key);
+        $this->owner = null;
     }
 
     /**

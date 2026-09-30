@@ -99,6 +99,11 @@ if ($lock->acquire()) {
 }
 ```
 
+`release()` only removes a lock this instance acquired and still owns: if the TTL ran out and
+another process took the lock meanwhile, the late `release()` leaves that lock alone. Use
+`forceRelease()` for a deliberate hand-off where another process releases (it removes the lock
+whoever holds it; `FileLock` can't break another process's `flock()`, so there it only releases its own).
+
 ### Stampede protection
 
 ```php
