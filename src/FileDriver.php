@@ -40,8 +40,23 @@ final class FileDriver implements CacheInterface
 
         // Another process may create the directory between is_dir() and mkdir();
         // that is success, not an error — so re-check before throwing.
-        if (!is_dir($this->directory) && !@mkdir($this->directory, 0o700, true) && !is_dir($this->directory)) {
-            throw new CacheException("Cannot create cache directory: $this->directory");
+        if (!is_dir($this->directory)) {
+            $warning = null;
+            set_error_handler(static function (int $errno, string $errstr) use (&$warning): bool {
+                $warning = $errstr;
+
+                return true;
+            }, E_WARNING);
+
+            try {
+                $created = mkdir($this->directory, 0o700, true);
+            } finally {
+                restore_error_handler();
+            }
+
+            if (!$created && !is_dir($this->directory)) {
+                throw new CacheException("Cannot create cache directory: $this->directory" . ($warning !== null ? " ($warning)" : ''));
+            }
         }
     }
 
