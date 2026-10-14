@@ -104,7 +104,9 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Compatibility matrix: PHP 8.5 (stable) + 8.6 / nightly (experimental)
-  # Redis tests are skipped when ext-redis is unavailable — full PHPUnit on host.
+  # Redis and Memcached tests are skipped here (no servers, no ext-memcached on the
+  # host) — full PHPUnit on host. The Docker `test` job above runs them against the
+  # compose stack's `redis` and `memcached` services.
   # ─────────────────────────────────────────────────────────────────────────────
   compatibility:
     runs-on: ubuntu-latest
