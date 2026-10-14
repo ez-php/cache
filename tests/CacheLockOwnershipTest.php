@@ -166,6 +166,11 @@ final class CacheLockOwnershipTest extends TestCase
             self::markTestSkipped('The "redis" PHP extension is not loaded.');
         }
 
+        // Redis::connect() warns *and* throws on an unresolvable host; the warning
+        // alone would fail the run (failOnWarning) where ext-redis is loaded but no
+        // server runs, as on the CI runner.
+        set_error_handler(static fn (): bool => true, E_WARNING);
+
         try {
             $redis = new Redis();
             $redis->connect('redis', 6379);
@@ -173,6 +178,8 @@ final class CacheLockOwnershipTest extends TestCase
             $redis->del(self::KEY);
         } catch (Throwable $e) {
             self::markTestSkipped('Redis server not reachable: ' . $e->getMessage());
+        } finally {
+            restore_error_handler();
         }
 
         return $this->redis = $redis;
