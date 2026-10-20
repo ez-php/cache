@@ -12,8 +12,15 @@ use RuntimeException;
  * Class MemcachedDriver
  *
  * Memcached-backed cache driver using the PHP "ext-memcached" extension.
- * Values are PHP-serialised before storage (using Memcached::OPT_SERIALIZER_PHP)
- * so any serialisable type is supported.
+ * Values are `serialize()`d to strings by the driver itself and restored with
+ * `unserialize(..., ['allowed_classes' => false])`, exactly like RedisDriver, so a
+ * tampered *string* entry can never instantiate a class (see CacheValue). The
+ * driver never hands ext-memcached a non-string value; an entry that ext-memcached
+ * decodes to anything but a string was not written by this driver and is reported
+ * as a miss. Note that ext-memcached decodes by the *item's* flags: an entry written
+ * by another client with the PHP-serializer flag is unserialized by the extension
+ * itself before this driver sees it, so Memcached must still not be writable by
+ * untrusted clients.
  *
  * TTL rules (matching CacheInterface):
  *   0   = no expiry
@@ -53,7 +60,6 @@ final class MemcachedDriver implements CacheInterface
         }
 
         $this->memcached = new Memcached();
-        $this->memcached->setOption(Memcached::OPT_SERIALIZER, Memcached::SERIALIZER_PHP);
 
         foreach ($servers as $server) {
             $this->memcached->addServer(
@@ -72,9 +78,9 @@ final class MemcachedDriver implements CacheInterface
      */
     public function get(string $key, mixed $default = null): mixed
     {
-        $value = $this->memcached->get($key);
+        [$found, $value] = $this->read($key);
 
-        if ($this->memcached->getResultCode() !== Memcached::RES_SUCCESS) {
+        if (!$found) {
             $this->misses++;
 
             return $default;
@@ -99,7 +105,7 @@ final class MemcachedDriver implements CacheInterface
         // Negative TTL means "already expired" — store with TTL=1 so Memcached evicts it immediately.
         $expiration = $ttl < 0 ? 1 : $ttl;
 
-        $this->memcached->set($key, $value, $expiration);
+        $this->memcached->set($key, serialize($value), $expiration);
     }
 
     /**
@@ -119,9 +125,7 @@ final class MemcachedDriver implements CacheInterface
      */
     public function has(string $key): bool
     {
-        $this->memcached->get($key);
-
-        return $this->memcached->getResultCode() === Memcached::RES_SUCCESS;
+        return $this->read($key)[0];
     }
 
     /**
@@ -133,9 +137,9 @@ final class MemcachedDriver implements CacheInterface
      */
     public function remember(string $key, int $ttl, Closure $callback): mixed
     {
-        $value = $this->memcached->get($key);
+        [$found, $value] = $this->read($key);
 
-        if ($this->memcached->getResultCode() === Memcached::RES_SUCCESS) {
+        if ($found) {
             $this->hits++;
 
             return $value;
@@ -166,8 +170,8 @@ final class MemcachedDriver implements CacheInterface
     /**
      * Increment a numeric value. Creates the key (starting at 0) if absent.
      *
-     * Read-modify-write — Memcached stores values via the PHP serialiser,
-     * so native increment is not compatible with values written by set().
+     * Read-modify-write — set() stores serialize()d strings, so native
+     * increment is not compatible with values written by set().
      *
      * @param string $key
      * @param int    $amount
@@ -187,8 +191,8 @@ final class MemcachedDriver implements CacheInterface
     /**
      * Decrement a numeric value. Creates the key (starting at 0) if absent.
      *
-     * Read-modify-write — Memcached stores values via the PHP serialiser,
-     * so native decrement is not compatible with values written by set().
+     * Read-modify-write — set() stores serialize()d strings, so native
+     * decrement is not compatible with values written by set().
      *
      * @param string $key
      * @param int    $amount
@@ -216,6 +220,44 @@ final class MemcachedDriver implements CacheInterface
     public function lock(string $key, int $ttl = 0): LockInterface
     {
         return new MemcachedLock($this->memcached, $key, $ttl);
+    }
+
+    /**
+     * Look a key up and decode it: `[true, value]` on a hit, `[false, null]` on a miss.
+     *
+     * Counts as a miss: an entry ext-memcached decodes to a non-string (not
+     * written by set()), and a string that is not serialize() output — e.g. a
+     * plain string stored by this driver before it serialized values itself.
+     * Only `b:0;` legitimately decodes to `false`.
+     *
+     * @param string $key
+     *
+     * @return array{bool, mixed}
+     */
+    private function read(string $key): array
+    {
+        $raw = $this->memcached->get($key);
+
+        if ($this->memcached->getResultCode() !== Memcached::RES_SUCCESS || !is_string($raw)) {
+            return [false, null];
+        }
+
+        // Invalid input makes unserialize() warn; keep that from reaching the
+        // application's error handler (which `@` would still invoke).
+        set_error_handler(static fn (): bool => true);
+
+        try {
+            /** @var mixed $value */
+            $value = unserialize($raw, ['allowed_classes' => false]);
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($value === false && $raw !== serialize(false)) {
+            return [false, null];
+        }
+
+        return [true, $value];
     }
 
     /**

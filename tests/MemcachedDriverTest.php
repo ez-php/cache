@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Cache;
 
+use ArrayObject;
 use EzPhp\Cache\MemcachedDriver;
 use EzPhp\Cache\MemcachedLock;
+use Memcached;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -159,6 +161,77 @@ final class MemcachedDriverTest extends TestCase
         $stats = $this->cache->stats();
         $this->assertGreaterThanOrEqual(1, $stats->hits);
         $this->assertGreaterThanOrEqual(1, $stats->misses);
+    }
+
+    public function testRawSerializedObjectStringIsNeverRestoredAsAnInstance(): void
+    {
+        $raw = $this->rawClient();
+        $raw->set('tampered', serialize(new ArrayObject([1, 2])));
+
+        $value = $this->cache->get('tampered');
+
+        $this->assertNotInstanceOf(ArrayObject::class, $value);
+        $this->assertNotInstanceOf(ArrayObject::class, $this->cache->remember('tampered', 0, static fn (): int => 1));
+    }
+
+    /**
+     * Proves the driver never *yields* such an entry; ext-memcached itself has
+     * already decoded it by its item flags, which no driver option can prevent.
+     */
+    public function testEntryStoredWithTheMemcachedPhpSerializerFlagIsTreatedAsAMiss(): void
+    {
+        $raw = $this->rawClient();
+        $raw->setOption(Memcached::OPT_SERIALIZER, Memcached::SERIALIZER_PHP);
+        $raw->set('flagged', new ArrayObject([1, 2]));
+
+        $this->assertSame('default', $this->cache->get('flagged', 'default'));
+        $this->assertSame(7, $this->cache->remember('flagged', 0, static fn (): int => 7));
+    }
+
+    /**
+     * Before values were serialize()d by the driver, ext-memcached stored a plain
+     * string as-is. Such a legacy entry is not valid serialize() output and must
+     * read as a miss — not as `false`, and without an unserialize() warning.
+     */
+    public function testLegacyPlainStringEntryIsAMissWithoutWarning(): void
+    {
+        $this->rawClient()->set('legacy', 'hello');
+
+        set_error_handler(static function (int $errno, string $errstr): never {
+            throw new \ErrorException($errstr, 0, $errno);
+        });
+
+        try {
+            $this->assertSame('default', $this->cache->get('legacy', 'default'));
+            $this->assertFalse($this->cache->has('legacy'));
+            $this->assertSame(3, $this->cache->remember('legacy', 0, static fn (): int => 3));
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    public function testStoredValuesArePlainSerializedStrings(): void
+    {
+        $this->cache->set('typed', ['a' => 1, 'b' => [true, null, 1.5]]);
+
+        $this->assertSame(serialize(['a' => 1, 'b' => [true, null, 1.5]]), $this->rawClient()->get('typed'));
+        $this->assertSame(['a' => 1, 'b' => [true, null, 1.5]], $this->cache->get('typed'));
+    }
+
+    public function testFalseRoundTripsAsAHit(): void
+    {
+        $this->cache->set('false-key', false);
+
+        $this->assertFalse($this->cache->get('false-key', 'default'));
+        $this->assertTrue($this->cache->has('false-key'));
+    }
+
+    private function rawClient(): Memcached
+    {
+        $client = new Memcached();
+        $client->addServer(self::HOST, self::PORT);
+
+        return $client;
     }
 
     public function testLockAcquireAndRelease(): void

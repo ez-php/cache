@@ -29,19 +29,28 @@ Configure in `config/cache.php`:
 
 ```php
 return [
-    'driver'    => getenv('CACHE_DRIVER') ?: 'array', // array | file | redis | memcached
+    'driver'    => getenv('CACHE_DRIVER') ?: 'array', // array | file | redis | memcached | database
     'file_path' => getenv('CACHE_PATH') ?: sys_get_temp_dir() . '/ez-cache',
     'redis'     => [
-        'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
-        'port'     => (int) (getenv('REDIS_PORT') ?: 6379),
-        'database' => (int) (getenv('REDIS_DATABASE') ?: 0),
+        'host'     => getenv('CACHE_REDIS_HOST') ?: '127.0.0.1',
+        'port'     => (int) (getenv('CACHE_REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('CACHE_REDIS_DB') ?: 0),
     ],
     'memcached' => [
-        'host' => getenv('MEMCACHED_HOST') ?: '127.0.0.1',
-        'port' => (int) (getenv('MEMCACHED_PORT') ?: 11211),
+        'host'   => getenv('CACHE_MEMCACHED_HOST') ?: '127.0.0.1',
+        'port'   => (int) (getenv('CACHE_MEMCACHED_PORT') ?: 11211),
+        'weight' => (int) (getenv('CACHE_MEMCACHED_WEIGHT') ?: 0),
+    ],
+    'database'  => [
+        'table'      => getenv('CACHE_DB_TABLE') ?: 'cache',
+        'lock_table' => getenv('CACHE_DB_LOCK_TABLE') ?: 'cache_locks',
     ],
 ];
 ```
+
+> Use the module-scoped `CACHE_REDIS_*` variables, not the generic `REDIS_HOST`/`REDIS_PORT`:
+> in an application built from the `ez-php/` template, `REDIS_PORT` is the host-published
+> port (e.g. `6383`), while the app container always reaches Redis at `redis:6379`.
 
 ## Usage
 
@@ -121,6 +130,7 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 | `file` | `file` | Filesystem, serialised entries |
 | `redis` | `redis` | Via `ext-redis`; `flush()` clears entire database |
 | `memcached` | `memcached` | Via `ext-memcached`; `flush()` clears entire server |
+| `database` | `database` | On the bound `DatabaseInterface`; tables `cache`/`cache_locks` auto-created (MySQL, SQLite, PostgreSQL); `flush()` empties only the cache table |
 
 ## Classes
 
@@ -131,9 +141,10 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 | `FileDriver` | Filesystem driver with MD5-keyed files |
 | `RedisDriver` | Redis driver via `ext-redis`; native TTL |
 | `MemcachedDriver` | Memcached driver via `ext-memcached` |
-| `FileLock` / `ArrayLock` / `RedisLock` / `MemcachedLock` | Driver-specific lock implementations |
+| `DatabaseDriver` | Database driver on `DatabaseInterface`; auto-created tables; call `prune()` periodically to delete expired rows that are never read again |
+| `FileLock` / `ArrayLock` / `RedisLock` / `MemcachedLock` / `DatabaseLock` | Driver-specific lock implementations |
 | `TaggableDriverTrait` | Provides `tags()` → `TaggedCache` for all drivers |
-| `TaggedCache` | Scoped cache view: keys prefixed with tag hash |
+| `TaggedCache` | Tag-scoped decorator: records keys per tag; `flush()` invalidates the group |
 | `CacheStats` | Immutable value object: hits, misses |
 | `CacheValue` | Value-contract guard used by every driver's `set()`: rejects objects and resources |
 | `StampedeProtectedCache` | Decorator: probabilistic early recompute to prevent stampedes |

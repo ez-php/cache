@@ -264,7 +264,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/cache
 
-Array, file, and Redis cache drivers for ez-php applications.
+Array, file, Redis, Memcached and database cache drivers for ez-php applications.
 
 ---
 
@@ -278,13 +278,15 @@ src/
 ├── ArrayDriver.php            — In-memory driver; data lives for the request lifetime only
 ├── FileDriver.php             — Filesystem driver; serialised entries keyed by MD5 filename
 ├── RedisDriver.php            — Redis driver via ext-redis; serialised values, native TTL; RedisLock support
-├── MemcachedDriver.php        — Memcached driver via ext-memcached; serialised values; MemcachedLock support
+├── MemcachedDriver.php        — Memcached driver via ext-memcached; serialize()d string values, restored without classes; MemcachedLock support
 ├── RedisLock.php              — LockInterface impl using Redis SET NX with an owner token; Lua compare-and-delete release
 ├── MemcachedLock.php          — LockInterface impl using Memcached::add() with an owner token; cas() release
+├── DatabaseDriver.php         — DatabaseInterface driver; auto-created `cache` table (driver-aware DDL), upsert set(), serialize()d values restored without classes
+├── DatabaseLock.php           — LockInterface impl as a row in `cache_locks`: INSERT on the primary key with owner token + expiry; owner-only DELETE release
 ├── ArrayLock.php              — LockInterface impl backed by in-process array (for ArrayDriver); owner token per entry
 ├── FileLock.php               — LockInterface impl using advisory file locks (flock); ownership is the handle
 ├── TaggableDriverTrait.php    — Provides tags() → TaggedCache for all drivers
-├── TaggedCache.php            — Scoped cache view: all keys prefixed with tag hash
+├── TaggedCache.php            — Tag-scoped decorator: records stored keys per tag (`__tag:{name}`); flush() deletes the group
 ├── CacheStats.php             — Immutable value object: hits, misses
 ├── CacheValue.php             — assertStorable(): every driver's set() rejects objects/resources (null, scalars, arrays only)
 ├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
@@ -297,6 +299,8 @@ tests/
 ├── CacheValueTest.php         — Value contract on Array/File/Redis: scalars/arrays round-trip, objects (also nested, also via remember()) and resources rejected
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
+├── CacheDatabaseDriverTest.php — DatabaseDriver + DatabaseLock contract on SQLite :memory: (expiry, upsert, increment, tags, tamper, lock ownership/expiry, prune(), expiration index)
+├── CacheDatabaseDriverMysqlTest.php — DDL (incl. expiration index), upsert (unchanged rewrite), lock INSERT and prune() on MySQL; skipped without DB_HOST
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')]) — `memcached:11211` in this module's stack and the root stack; `ext-memcached` is installed by both Dockerfiles (not in the base image)
 ├── CacheTest.php              — Covers Cache facade: delegation of every CacheInterface method, uninitialized throw, reset
 ├── Cache/
@@ -363,10 +367,24 @@ Redis store via the PHP `ext-redis` extension. Throws `RuntimeException` at cons
 Memcached store via the PHP `ext-memcached` extension. Throws `RuntimeException` at construction if the extension is not loaded.
 
 - Accepts a list of server configs: `[['host' => '...', 'port' => 11211, 'weight' => 0]]`
-- Uses `Memcached::SERIALIZER_PHP` so any serialisable type is supported
+- Values are `serialize()`d to strings by the driver and restored with `unserialize(..., ['allowed_classes' => false])`, like `RedisDriver` — no `Memcached::SERIALIZER_PHP`, whose restore is an unrestricted `unserialize()`. A hit that ext-memcached decodes to a non-string (an entry written by another client with the PHP-serializer flag), or a string that is not `serialize()` output (e.g. a plain string the driver stored before it serialized values — flush Memcached when upgrading), is reported as a miss; ext-memcached has already decoded such an entry itself before the driver sees it, so Memcached must still not be writable by untrusted clients
 - TTL 0 = no expiry; TTL > 0 = N seconds; TTL < 0 = stored with TTL=1 (evicted almost immediately)
 - `flush()` calls `Memcached::flush()` — clears the **entire connected server**, not just this module's keys
 - Lock via `MemcachedLock` using `Memcached::add()` (atomic add-if-not-exists) with an owner token
+
+---
+
+### DatabaseDriver (`src/DatabaseDriver.php`) and DatabaseLock (`src/DatabaseLock.php`)
+
+Cache on `ez-php/contracts`' `DatabaseInterface` — the shared cache for applications with a database but no Redis/Memcached (e.g. as `ez-php/idempotency`'s store).
+
+- Tables (validated `[A-Za-z0-9_]` names, defaults `cache` / `cache_locks`) are created on construction with `CREATE TABLE IF NOT EXISTS`, MySQL DDL or a portable SQLite/PostgreSQL form — the `ez-php/session` `DatabaseSessionHandler` pattern; no migration needed
+- Expired rows are deleted on read of that key only, so `prune(): int` (not on `CacheInterface`) deletes every expired entry and expired lock in one statement each; run it from a scheduled task. `expiration` is indexed (`<table>_expiration_idx`): inline in the MySQL `CREATE TABLE`, `CREATE INDEX IF NOT EXISTS` on SQLite/PostgreSQL — a MySQL table created before the index existed needs `ALTER TABLE cache ADD INDEX cache_expiration_idx (expiration)` once
+- `cache`: `cache_key` (PK), `value` (serialised), `expiration` (Unix timestamp, `0` = never). Expired rows are misses and are deleted on read; a negative TTL deletes the key
+- `set()` is one driver-aware upsert (`ON DUPLICATE KEY UPDATE` / `ON CONFLICT … DO UPDATE`)
+- `flush()` deletes only this driver's `cache` rows — nothing else in the database
+- `increment()`/`decrement()` are read-modify-write inside one `transaction()`, keeping the entry's expiry
+- `DatabaseLock`: `acquire()` first deletes an expired row for the key, then INSERTs `(lock_key, owner, expiration)`; a primary-key violation (`PDOException`) means "held". `release()` deletes only the row with its own owner token; `forceRelease()` deletes any
 
 ---
 
@@ -384,7 +402,7 @@ Reads `config/cache.php` and binds `CacheInterface` lazily to the matching drive
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `cache.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, or `'memcached'` |
+| `cache.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, `'memcached'`, or `'database'` (resolves `DatabaseInterface` from the container) |
 | `cache.file_path` | string | `sys_get_temp_dir() . '/ez-cache'` | Directory for FileDriver |
 | `cache.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `cache.redis.port` | int | `6379` | Redis port |
@@ -392,6 +410,8 @@ Reads `config/cache.php` and binds `CacheInterface` lazily to the matching drive
 | `cache.memcached.host` | string | `'127.0.0.1'` | Memcached hostname |
 | `cache.memcached.port` | int | `11211` | Memcached port |
 | `cache.memcached.weight` | int | `0` | Server weight (0 = equal weight) |
+| `cache.database.table` | string | `'cache'` | Entry table for DatabaseDriver |
+| `cache.database.lock_table` | string | `'cache_locks'` | Lock table for DatabaseDriver |
 
 Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setResolver()` to wire the static facade (see `Cache` above for why resolution is deferred rather than eager).
 
@@ -400,12 +420,12 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 ## Design Decisions and Constraints
 
 - **Locks release only what they own** — `acquire()` stores a random owner token (Redis/Memcached value, `ArrayLock` registry entry); `release()` removes the lock only while it still carries that token — a Lua `GET`+`DEL` script on Redis, `get(GET_EXTENDED)` + `cas()` with a negative expiry (= expire now) on Memcached. Without it, a holder whose TTL ran out deleted the next holder's lock, and a fresh `lock()` object's `release()` deleted any lock. `release()` on an instance that never acquired is a no-op. `forceRelease()` is the explicit owner-less path for hand-offs between processes (`ez-php/queue`'s `CacheJobLock` releasing a `UniqueQueue` lock in the worker). `FileLock` needs no token — a `flock()` belongs to its handle — and for the same reason its `forceRelease()` can't break another process's lock; it acts like `release()`.
-- **`flush()` is on the interface** — All three drivers implement it; the operation is part of the cache contract. Callers holding a `CacheInterface` reference can flush without an unsafe cast. Note that `RedisDriver::flush()` calls `Redis::flushDB()` — it clears the entire selected database, not just this module's keys. Use a dedicated database index (`cache.redis.database`) to isolate cache data.
+- **`flush()` is on the interface** — All five drivers implement it; the operation is part of the cache contract. Callers holding a `CacheInterface` reference can flush without an unsafe cast. Note that `RedisDriver::flush()` calls `Redis::flushDB()` — it clears the entire selected database, not just this module's keys. Use a dedicated database index (`cache.redis.database`) to isolate cache data.
 - **MD5 filenames in FileDriver** — Keys may contain characters unsafe for filenames. MD5 is not cryptographic here; it is a deterministic, fixed-length, filesystem-safe encoding. Collision risk is negligible for cache keys.
 - **`ext-redis`, not Predis** — The native extension is faster and has no PHP dependencies. Applications that cannot install the extension should use `FileDriver`.
 - **No key prefixing** — This module does not namespace keys. If multiple applications share a Redis database or cache directory, key collisions are the application's responsibility (use `cache.redis.database` or set a `cache.file_path` per application).
-- **No tagging or invalidation groups** — Out of scope. Tags belong in a higher-level cache abstraction if needed.
-- **Values are limited to null, scalars and arrays — on every driver** — `FileDriver`/`RedisDriver` unserialize with `allowed_classes => false` so a tampered cache entry can never instantiate a class; an object would therefore come back as `__PHP_Incomplete_Class` there, while `ArrayDriver` (what the tests use) returned the real object. That mismatch broke `ez-php/exchange`'s `CachingExchangeRateProvider` in production only. `CacheValue::assertStorable()` runs in every driver's `set()` (and therefore `remember()`), so storing an object fails immediately and identically everywhere. Callers cache a scalar/array representation (`BigDecimal::toString()`, `toArray()`) and rebuild the object after reading.
+- **Tagging and group invalidation ship as a decorator** — `tags()` (via `TaggableDriverTrait`, on every driver) returns a `TaggedCache` that records each key it stores in a per-tag list (`__tag:{name}`, no TTL) on the underlying driver; its `flush()` deletes every listed key and then the tag lists, invalidating the group without touching untagged entries.
+- **Values are limited to null, scalars and arrays — on every driver** — `FileDriver`/`RedisDriver`/`MemcachedDriver`/`DatabaseDriver` unserialize with `allowed_classes => false` so a tampered cache entry can never instantiate a class; an object would therefore come back as `__PHP_Incomplete_Class` there, while `ArrayDriver` (what the tests use) returned the real object. That mismatch broke `ez-php/exchange`'s `CachingExchangeRateProvider` in production only. `CacheValue::assertStorable()` runs in every driver's `set()` (and therefore `remember()`), so storing an object fails immediately and identically everywhere. Callers cache a scalar/array representation (`BigDecimal::toString()`, `toArray()`) and rebuild the object after reading.
 - **Serialisation in Redis** — `get()` calls `unserialize()` on the raw string. If the value was written outside this driver, the result is undefined. Never mix raw Redis writes with `RedisDriver`.
 - **`Cache` facade resolution is deferred, not eager** — Unlike some other facades in the codebase, `CacheServiceProvider::boot()` does not call `$app->make(CacheInterface::class)` directly. Doing so would resolve — and permanently cache as a container singleton — whatever driver the config happened to select at bootstrap time, before application or test code has a chance to configure it afterward (see `CacheServiceProviderTest`, which sets `CACHE_DRIVER`/`CACHE_PATH` env vars inside individual test methods, after `setUp()`/bootstrap has already run). `Cache::setResolver()` stores a closure instead, resolved only on the first real facade call.
 
@@ -413,6 +433,7 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 
 ## Testing Approach
 
+- **DatabaseDriver** — `CacheDatabaseDriverTest` runs on SQLite `:memory:` (the framework `Database`, available through `ez-php/testing-application`); `CacheDatabaseDriverMysqlTest` covers the MySQL dialect and skips without `DB_HOST`.
 - **ArrayDriver and FileDriver** — No external infrastructure. `FileDriverTest` uses `sys_get_temp_dir()` and cleans up via `flush()` in `tearDown`.
 - **RedisDriver** — Requires a live Redis instance (available via Docker). Tests that need Redis are marked or grouped so they can be skipped in environments without the `ext-redis` extension.
 - **Contract tests** — Each driver test covers the full `CacheInterface` contract: get/set/forget/has/remember, TTL expiry, and negative TTL.

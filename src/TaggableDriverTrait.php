@@ -8,7 +8,7 @@ namespace EzPhp\Cache;
  * Trait TaggableDriverTrait
  *
  * Provides the tags() method for CacheInterface drivers.
- * All three built-in drivers (ArrayDriver, FileDriver, RedisDriver) use this trait.
+ * Every built-in driver (Array, File, Redis, Memcached, Database) uses this trait.
  *
  * @package EzPhp\Cache
  */

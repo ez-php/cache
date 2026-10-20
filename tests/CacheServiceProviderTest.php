@@ -9,8 +9,12 @@ use EzPhp\Cache\ArrayDriver;
 use EzPhp\Cache\Cache;
 use EzPhp\Cache\CacheInterface;
 use EzPhp\Cache\CacheServiceProvider;
+use EzPhp\Cache\CacheValue;
+use EzPhp\Cache\DatabaseDriver;
 use EzPhp\Cache\FileDriver;
 use EzPhp\Cache\RedisDriver;
+use EzPhp\Contracts\DatabaseInterface;
+use EzPhp\Database\Database;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use Throwable;
@@ -23,6 +27,8 @@ use Throwable;
 #[CoversClass(CacheServiceProvider::class)]
 #[UsesClass(ArrayDriver::class)]
 #[UsesClass(FileDriver::class)]
+#[UsesClass(DatabaseDriver::class)]
+#[UsesClass(CacheValue::class)]
 #[UsesClass(RedisDriver::class)]
 #[UsesClass(Cache::class)]
 final class CacheServiceProviderTest extends ApplicationTestCase
@@ -95,6 +101,22 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         putenv('CACHE_PATH=' . $this->cacheDir);
 
         $this->assertInstanceOf(FileDriver::class, $this->app()->make(CacheInterface::class));
+    }
+
+    /**
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function test_database_driver_is_created_on_the_bound_database(): void
+    {
+        putenv('CACHE_DRIVER=database');
+        $this->app()->bind(DatabaseInterface::class, static fn (): Database => new Database('sqlite::memory:', '', ''));
+
+        $cache = $this->app()->make(CacheInterface::class);
+
+        $this->assertInstanceOf(DatabaseDriver::class, $cache);
+        $cache->set('k', 'v');
+        $this->assertSame('v', $cache->get('k'));
     }
 
     /**

@@ -6,6 +6,7 @@ namespace EzPhp\Cache;
 
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ContainerInterface;
+use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Contracts\ServiceProvider;
 
 /**
@@ -13,7 +14,7 @@ use EzPhp\Contracts\ServiceProvider;
  *
  * Binds CacheInterface to the driver configured via config/cache.php.
  *
- * Supported drivers: array, file, redis, memcached
+ * Supported drivers: array, file, redis, memcached, database
  * Default: array
  *
  * @package EzPhp\Cache
@@ -34,6 +35,7 @@ final class CacheServiceProvider extends ServiceProvider
                 'file' => $this->makeFile($config),
                 'redis' => $this->makeRedis($config),
                 'memcached' => $this->makeMemcached($config),
+                'database' => $this->makeDatabase($config),
                 default => new ArrayDriver(),
             };
         });
@@ -80,6 +82,23 @@ final class CacheServiceProvider extends ServiceProvider
             is_string($host) ? $host : '127.0.0.1',
             is_int($port) ? $port : 6379,
             is_int($db) ? $db : 0,
+        );
+    }
+
+    /**
+     * @param ConfigInterface $config
+     *
+     * @return DatabaseDriver
+     */
+    private function makeDatabase(ConfigInterface $config): DatabaseDriver
+    {
+        $table = $config->get('cache.database.table', 'cache');
+        $lockTable = $config->get('cache.database.lock_table', 'cache_locks');
+
+        return new DatabaseDriver(
+            $this->app->make(DatabaseInterface::class),
+            is_string($table) ? $table : 'cache',
+            is_string($lockTable) ? $lockTable : 'cache_locks',
         );
     }
 
