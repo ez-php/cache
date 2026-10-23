@@ -283,6 +283,8 @@ src/
 ├── RedisLock.php              — LockInterface impl using Redis SET NX with an owner token; Lua compare-and-delete release
 ├── MemcachedLock.php          — LockInterface impl using Memcached::add() with an owner token; cas() release
 ├── DatabaseDriver.php         — DatabaseInterface driver; auto-created `cache` table (driver-aware DDL), upsert set(), serialize()d values restored without classes
+├── ApcuDriver.php             — ext-apcu shared-memory driver (one host): native values, atomic apcu_inc() counters, flush() clears the APCu user cache
+├── ApcuLock.php               — LockInterface via apcu_add() of an int owner token; apcu_cas() + delete release (owner only)
 ├── DatabaseLock.php           — LockInterface impl as a row in `cache_locks`: INSERT on the primary key with owner token + expiry; owner-only DELETE release
 ├── ArrayLock.php              — LockInterface impl backed by in-process array (for ArrayDriver); owner token per entry
 ├── FileLock.php               — LockInterface impl using advisory file locks (flock); ownership is the handle
@@ -291,6 +293,11 @@ src/
 ├── CacheStats.php             — Immutable value object: hits, misses
 ├── CacheValue.php             — assertStorable(): every driver's set() rejects objects/resources (null, scalars, arrays only)
 ├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
+├── PrunableCacheInterface.php — prune(): int for stores that keep expired entries until read (DatabaseDriver)
+├── Console/
+│   ├── CacheClearCommand.php  — `cache:clear [--tags=a,b]`: flush the store or only the given tags
+│   └── CachePruneCommand.php  — `cache:prune`: prune() on a PrunableCacheInterface store (PrefixedCache unwrapped), no-op otherwise
+├── PrefixedCache.php          — Decorator: prefixes every key, lock and tag list (shared stores, tenants); flush()/stats() delegate
 ├── Cache.php                  — Static facade backed by a deferred-resolver singleton; one-line delegations to CacheInterface
 └── CacheServiceProvider.php   — Reads config/cache.php and binds CacheInterface to the chosen driver; wires Cache facade in boot()
 
@@ -304,9 +311,14 @@ tests/
 ├── CacheValueTest.php         — Value contract on Array/File/Redis: scalars/arrays round-trip, objects (also nested, also via remember()) and resources rejected
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
+├── CacheApcuDriverTest.php    — ApcuDriver + ApcuLock against real APCu (skipped without ext-apcu / apc.enable_cli): falsy hits, counters, tags, owner-only locks
 ├── CacheDatabaseDriverTest.php — DatabaseDriver + DatabaseLock contract on SQLite :memory: (expiry, upsert, increment, tags, tamper, lock ownership/expiry, prune(), expiration index)
 ├── CacheDatabaseDriverMysqlTest.php — DDL (incl. expiration index), upsert (unchanged rewrite), lock INSERT, prune() and increment() from 4 concurrent processes on MySQL; skipped without DB_HOST
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')]) — `memcached:11211` in this module's stack and the root stack; `ext-memcached` is installed by both Dockerfiles (not in the base image)
+├── Console/
+│   ├── CacheClearCommandTest.php — full flush vs. --tags, name/help
+│   └── CachePruneCommandTest.php — SQLite DatabaseDriver pruned directly and behind PrefixedCache; no-op for ArrayDriver
+├── PrefixedCacheTest.php      — two prefixes over one ArrayDriver: isolation, remember/counters, prefixed locks, tag flush per prefix, shared flush()
 ├── CacheTest.php              — Covers Cache facade: delegation of every CacheInterface method, uninitialized throw, reset
 ├── Cache/
 │   ├── RedisLockTest.php  — Unit tests for RedisLock against a mocked phpredis client (no Redis server required)
@@ -385,12 +397,20 @@ Memcached store via the PHP `ext-memcached` extension. Throws `RuntimeException`
 Cache on `ez-php/contracts`' `DatabaseInterface` — the shared cache for applications with a database but no Redis/Memcached (e.g. as `ez-php/idempotency`'s store).
 
 - Tables (validated `[A-Za-z0-9_]` names, defaults `cache` / `cache_locks`) are created on construction with `CREATE TABLE IF NOT EXISTS`, MySQL DDL or a portable SQLite/PostgreSQL form — the `ez-php/session` `DatabaseSessionHandler` pattern; no migration needed
-- Expired rows are deleted on read of that key only, so `prune(): int` (not on `CacheInterface`) deletes every expired entry and expired lock in one statement each; run it from a scheduled task. `expiration` is indexed (`<table>_expiration_idx`): inline in the MySQL `CREATE TABLE`, `CREATE INDEX IF NOT EXISTS` on SQLite/PostgreSQL — a MySQL table created before the index existed needs `ALTER TABLE cache ADD INDEX cache_expiration_idx (expiration)` once
+- Expired rows are deleted on read of that key only, so `prune(): int` (from `PrunableCacheInterface`, not on `CacheInterface`) deletes every expired entry and expired lock in one statement each; schedule `cache:prune` to run it. `expiration` is indexed (`<table>_expiration_idx`): inline in the MySQL `CREATE TABLE`, `CREATE INDEX IF NOT EXISTS` on SQLite/PostgreSQL — a MySQL table created before the index existed needs `ALTER TABLE cache ADD INDEX cache_expiration_idx (expiration)` once
 - `cache`: `cache_key` (PK), `value` (serialised), `expiration` (Unix timestamp, `0` = never). Expired rows are misses and are deleted on read; a negative TTL deletes the key
 - `set()` is one driver-aware upsert (`ON DUPLICATE KEY UPDATE` / `ON CONFLICT … DO UPDATE`)
 - `flush()` deletes only this driver's `cache` rows — nothing else in the database
 - `increment()`/`decrement()` are read-modify-write inside one `transaction()`, keeping the entry's expiry. On MySQL/PostgreSQL the read holds a row lock: a no-op upsert first creates (or locks) the row — an absent key has no row to lock — then `SELECT … FOR UPDATE` reads the committed value. A plain `SELECT` is a non-locking snapshot read under InnoDB's REPEATABLE READ, so concurrent increments used to lose updates. SQLite serialises writers itself
 - `DatabaseLock`: `acquire()` first deletes an expired row for the key, then INSERTs `(lock_key, owner, expiration)`; a primary-key violation (`PDOException`) means "held". `release()` deletes only the row with its own owner token; `forceRelease()` deletes any
+
+---
+
+### ApcuDriver (`src/ApcuDriver.php`) and ApcuLock (`src/ApcuLock.php`)
+
+Shared memory via ext-apcu — shared by the PHP-FPM workers of one host, lost on restart, never across hosts. Values are stored natively (APCu serialises them; `CacheValue` keeps objects out). `increment()`/`decrement()` are atomic: `apcu_add($key, 0)` then `apcu_inc()`/`apcu_dec()`, which keeps the TTL; a non-integer value falls back to read-modify-write. A negative TTL deletes the key. `flush()` is `apcu_clear_cache()` — the whole user cache of the host. The constructor throws unless `apcu_enabled()` is true, because with `apc.enable_cli=0` every CLI call (console, worker, tests) would silently miss.
+
+`ApcuLock` stores a random integer owner token with `apcu_add()` under `__lock:{key}` (so a lock never collides with a cache entry of the same name). `release()` swaps the token for `0` with `apcu_cas()` — atomic, fails once the entry is someone else's — and then deletes the entry; in the microseconds between the two calls a concurrent `acquire()` just sees the lock as held.
 
 ---
 
@@ -408,7 +428,7 @@ Reads `config/cache.php` and binds `CacheInterface` lazily to the matching drive
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `cache.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, `'memcached'`, or `'database'` (resolves `DatabaseInterface` from the container) |
+| `cache.driver` | string | `'array'` | `'array'`, `'file'`, `'redis'`, `'memcached'`, `'database'` (resolves `DatabaseInterface` from the container) or `'apcu'` |
 | `cache.file_path` | string | `sys_get_temp_dir() . '/ez-cache'` | Directory for FileDriver |
 | `cache.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `cache.redis.port` | int | `6379` | Redis port |
@@ -418,8 +438,9 @@ Reads `config/cache.php` and binds `CacheInterface` lazily to the matching drive
 | `cache.memcached.weight` | int | `0` | Server weight (0 = equal weight) |
 | `cache.database.table` | string | `'cache'` | Entry table for DatabaseDriver |
 | `cache.database.lock_table` | string | `'cache_locks'` | Lock table for DatabaseDriver |
+| `cache.prefix` | string | `''` | Non-empty: the driver is wrapped in `PrefixedCache` with this prefix |
 
-Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setResolver()` to wire the static facade (see `Cache` above for why resolution is deferred rather than eager).
+Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setResolver()` to wire the static facade (see `Cache` above for why resolution is deferred rather than eager) and registers `cache:clear` / `cache:prune` via `ServiceProvider::registerCommand()` (a no-op outside an application with a command registry).
 
 ---
 
@@ -429,7 +450,9 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 - **`flush()` is on the interface** — All five drivers implement it; the operation is part of the cache contract. Callers holding a `CacheInterface` reference can flush without an unsafe cast. Note that `RedisDriver::flush()` calls `Redis::flushDB()` — it clears the entire selected database, not just this module's keys. Use a dedicated database index (`cache.redis.database`) to isolate cache data.
 - **MD5 filenames in FileDriver** — Keys may contain characters unsafe for filenames. MD5 is not cryptographic here; it is a deterministic, fixed-length, filesystem-safe encoding. Collision risk is negligible for cache keys.
 - **`ext-redis`, not Predis** — The native extension is faster and has no PHP dependencies. Applications that cannot install the extension should use `FileDriver`.
-- **No key prefixing** — This module does not namespace keys. If multiple applications share a Redis database or cache directory, key collisions are the application's responsibility (use `cache.redis.database` or set a `cache.file_path` per application).
+- **`ez-php/console` is a soft dependency (`suggest` + `require-dev`)** — only `Console\CacheClearCommand`/`CachePruneCommand` import it, and the provider registers them by class name, so PSR-4 loads them (and the console classes) only when an application's console runs them. Same pattern as `ez-php/orm`'s `LoggingDatabase` and `ez-php/logging`.
+- **`cache:prune` relies on `PrunableCacheInterface`, not on a driver class** — only `DatabaseDriver` keeps expired rows until they are read again; the command unwraps `PrefixedCache` (`inner()`, pruning only removes expired rows, so it is safe across prefixes) and reports a no-op for every other store, so it can stay scheduled when the driver changes.
+- **Key prefixing is a decorator, not a driver feature** — drivers store keys as given. `PrefixedCache` (or `cache.prefix`, which the provider turns into one) namespaces every key, lock and tag list for stores shared between applications or tenants. Tags work unchanged because `tags()` builds the `TaggedCache` on the decorator, so the `__tag:{name}` lists are prefixed as well. `flush()` is not key-based and empties the whole store — every prefix — as on the bare driver; per-prefix invalidation goes through tags. Choosing the prefix per tenant at runtime is the application's job.
 - **Tagging and group invalidation ship as a decorator** — `tags()` (via `TaggableDriverTrait`, on every driver) returns a `TaggedCache` that records each key it stores in a per-tag list (`__tag:{name}`, no TTL) on the underlying driver; its `flush()` deletes every listed key and then the tag lists, invalidating the group without touching untagged entries.
 - **Values are limited to null, scalars and arrays — on every driver** — `FileDriver`/`RedisDriver`/`MemcachedDriver`/`DatabaseDriver` unserialize with `allowed_classes => false` so a tampered cache entry can never instantiate a class; an object would therefore come back as `__PHP_Incomplete_Class` there, while `ArrayDriver` (what the tests use) returned the real object. That mismatch broke `ez-php/exchange`'s `CachingExchangeRateProvider` in production only. `CacheValue::assertStorable()` runs in every driver's `set()` (and therefore `remember()`), so storing an object fails immediately and identically everywhere. Callers cache a scalar/array representation (`BigDecimal::toString()`, `toArray()`) and rebuild the object after reading.
 - **Serialisation in Redis** — `get()` calls `unserialize()` on the raw string. If the value was written outside this driver, the result is undefined. Never mix raw Redis writes with `RedisDriver`.
@@ -452,7 +475,7 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 
 | Concern | Where it belongs |
 |---|---|
-| Cache key prefixing / namespacing | Application layer or a wrapping decorator |
+| Per-tenant prefix resolution (which tenant is active) | Application layer — construct a `PrefixedCache` per tenant |
 | Session storage | PHP native sessions or a dedicated session driver |
 | HTTP response caching (reverse proxy) | Infrastructure layer (Nginx, Varnish) |
 | Queue / job storage | `ez-php/queue` |

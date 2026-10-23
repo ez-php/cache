@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace EzPhp\Cache;
 
+use EzPhp\Cache\Console\CacheClearCommand;
+use EzPhp\Cache\Console\CachePruneCommand;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\ContainerInterface;
 use EzPhp\Contracts\DatabaseInterface;
@@ -31,13 +33,19 @@ final class CacheServiceProvider extends ServiceProvider
             $driver = $config->get('cache.driver', 'array');
             $driver = is_string($driver) ? $driver : 'array';
 
-            return match ($driver) {
+            $cache = match ($driver) {
                 'file' => $this->makeFile($config),
                 'redis' => $this->makeRedis($config),
                 'memcached' => $this->makeMemcached($config),
                 'database' => $this->makeDatabase($config),
+                'apcu' => new ApcuDriver(),
                 default => new ArrayDriver(),
             };
+
+            // Optional key namespace for stores shared between applications or tenants.
+            $prefix = $config->get('cache.prefix', '');
+
+            return is_string($prefix) && $prefix !== '' ? new PrefixedCache($cache, $prefix) : $cache;
         });
     }
 
@@ -53,6 +61,11 @@ final class CacheServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Cache::setResolver(fn (): CacheInterface => $this->app->make(CacheInterface::class));
+
+        // Console commands need ez-php/console (a suggest); registered by class name, so
+        // nothing is autoloaded unless the application's console runs them.
+        $this->registerCommand(CacheClearCommand::class);
+        $this->registerCommand(CachePruneCommand::class);
     }
 
     /**

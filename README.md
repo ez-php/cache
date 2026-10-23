@@ -122,6 +122,32 @@ $protected = new StampedeProtectedCache($cache);
 $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 ```
 
+### Key prefixes
+
+Several applications or tenants sharing one store keep their keys apart with `PrefixedCache` — or set `cache.prefix` (`CACHE_PREFIX`) and the provider wraps the configured driver for you:
+
+```php
+use EzPhp\Cache\PrefixedCache;
+
+$tenant = new PrefixedCache($cache, 'tenant-42:');
+$tenant->set('settings', [...]);            // stored as tenant-42:settings
+$tenant->tags('users')->flush();            // only this tenant's tagged entries
+```
+
+Keys, locks and tags are prefixed. `flush()` still empties the whole underlying store (every prefix); tag entries and flush the tag to invalidate one prefix.
+
+## Console commands
+
+With an ez-php application (and `ez-php/console`, which the framework already requires), `CacheServiceProvider` registers:
+
+```bash
+php ez cache:clear                 # flush the whole store
+php ez cache:clear --tags=users    # only entries tagged users
+php ez cache:prune                 # delete expired rows (database driver); schedule it
+```
+
+`cache:prune` is a no-op on stores that evict on their own (array, file, Redis, Memcached).
+
 ## Drivers
 
 | Driver | `CACHE_DRIVER` | Notes |
@@ -130,6 +156,7 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 | `file` | `file` | Filesystem, serialised entries |
 | `redis` | `redis` | Via `ext-redis`; `flush()` clears entire database |
 | `memcached` | `memcached` | Via `ext-memcached`; `flush()` clears entire server |
+| `apcu` | `apcu` | Via `ext-apcu` (CLI: `apc.enable_cli=1`); shared by one host's workers; atomic counters; `flush()` clears the APCu user cache |
 | `database` | `database` | On the bound `DatabaseInterface`; tables `cache`/`cache_locks` auto-created (MySQL, SQLite, PostgreSQL); `flush()` empties only the cache table |
 
 ## Classes
@@ -141,13 +168,17 @@ $value = $protected->remember('expensive-key', 300, fn () => heavyQuery());
 | `FileDriver` | Filesystem driver with MD5-keyed files |
 | `RedisDriver` | Redis driver via `ext-redis`; native TTL |
 | `MemcachedDriver` | Memcached driver via `ext-memcached` |
-| `DatabaseDriver` | Database driver on `DatabaseInterface`; auto-created tables; call `prune()` periodically to delete expired rows that are never read again |
-| `FileLock` / `ArrayLock` / `RedisLock` / `MemcachedLock` / `DatabaseLock` | Driver-specific lock implementations |
+| `ApcuDriver` | Shared-memory driver via `ext-apcu` (one host) |
+| `DatabaseDriver` | Database driver on `DatabaseInterface`; auto-created tables; run `cache:prune` (or `prune()`) periodically to delete expired rows that are never read again |
+| `PrunableCacheInterface` | `prune(): int` — implemented by `DatabaseDriver` |
+| `CacheClearCommand` / `CachePruneCommand` | `cache:clear [--tags=…]` / `cache:prune` |
+| `FileLock` / `ArrayLock` / `RedisLock` / `MemcachedLock` / `DatabaseLock` / `ApcuLock` | Driver-specific lock implementations |
 | `TaggableDriverTrait` | Provides `tags()` → `TaggedCache` for all drivers |
 | `TaggedCache` | Tag-scoped decorator: records keys per tag; `flush()` invalidates the group |
 | `CacheStats` | Immutable value object: hits, misses |
 | `CacheValue` | Value-contract guard used by every driver's `set()`: rejects objects and resources |
 | `StampedeProtectedCache` | Decorator: probabilistic early recompute to prevent stampedes |
+| `PrefixedCache` | Decorator: prefixes every key, lock and tag list; wired by `cache.prefix` |
 | `CacheServiceProvider` | Config-driven driver binding |
 
 ## License

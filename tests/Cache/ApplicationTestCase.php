@@ -37,6 +37,7 @@ abstract class ApplicationTestCase extends EzPhpApplicationTestCase
             return [
                 'driver'    => getenv('CACHE_DRIVER') ?: 'array',
                 'file_path' => getenv('CACHE_PATH') ?: sys_get_temp_dir() . '/ez-cache',
+                'prefix'    => getenv('CACHE_PREFIX') ?: '',
                 'redis'     => [
                     'host'     => getenv('CACHE_REDIS_HOST') ?: '127.0.0.1',
                     'port'     => (int) (getenv('CACHE_REDIS_PORT') ?: 6379),

@@ -31,7 +31,7 @@ use PDO;
  *
  * @package EzPhp\Cache
  */
-final class DatabaseDriver implements CacheInterface
+final class DatabaseDriver implements CacheInterface, PrunableCacheInterface
 {
     use TaggableDriverTrait;
 

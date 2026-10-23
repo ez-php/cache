@@ -10,8 +10,11 @@ use EzPhp\Cache\Cache;
 use EzPhp\Cache\CacheInterface;
 use EzPhp\Cache\CacheServiceProvider;
 use EzPhp\Cache\CacheValue;
+use EzPhp\Cache\Console\CacheClearCommand;
+use EzPhp\Cache\Console\CachePruneCommand;
 use EzPhp\Cache\DatabaseDriver;
 use EzPhp\Cache\FileDriver;
+use EzPhp\Cache\PrefixedCache;
 use EzPhp\Cache\RedisDriver;
 use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Database\Database;
@@ -31,6 +34,7 @@ use Throwable;
 #[UsesClass(CacheValue::class)]
 #[UsesClass(RedisDriver::class)]
 #[UsesClass(Cache::class)]
+#[UsesClass(PrefixedCache::class)]
 final class CacheServiceProviderTest extends ApplicationTestCase
 {
     private string $cacheDir = '';
@@ -44,6 +48,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         putenv('CACHE_PATH=');
         putenv('CACHE_REDIS_HOST=');
         putenv('CACHE_REDIS_PORT=');
+        putenv('CACHE_PREFIX=');
         Cache::resetInstance();
 
         parent::setUp();
@@ -76,6 +81,7 @@ final class CacheServiceProviderTest extends ApplicationTestCase
         putenv('CACHE_PATH=');
         putenv('CACHE_REDIS_HOST=');
         putenv('CACHE_REDIS_PORT=');
+        putenv('CACHE_PREFIX=');
         Cache::resetInstance();
 
         parent::tearDown();
@@ -88,6 +94,32 @@ final class CacheServiceProviderTest extends ApplicationTestCase
     public function test_default_driver_is_array(): void
     {
         $this->assertInstanceOf(ArrayDriver::class, $this->app()->make(CacheInterface::class));
+    }
+
+    /**
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function test_boot_registers_the_cache_console_commands(): void
+    {
+        $commands = $this->app()->getCommands();
+
+        $this->assertContains(CacheClearCommand::class, $commands);
+        $this->assertContains(CachePruneCommand::class, $commands);
+    }
+
+    /**
+     * @return void
+     * @throws \ReflectionException
+     */
+    public function test_prefix_wraps_the_driver_in_a_prefixed_cache(): void
+    {
+        putenv('CACHE_PREFIX=tenant-1:');
+
+        $cache = $this->app()->make(CacheInterface::class);
+
+        $this->assertInstanceOf(PrefixedCache::class, $cache);
+        $this->assertSame('tenant-1:', $cache->prefix());
     }
 
     /**
