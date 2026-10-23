@@ -232,10 +232,7 @@ final class DatabaseDriver implements CacheInterface
     {
         /** @var int */
         return $this->db->transaction(function () use ($key, $delta): int {
-            $rows = $this->db->query(
-                "SELECT value, expiration FROM {$this->table} WHERE cache_key = ?",
-                [$key],
-            );
+            $rows = $this->lockedRead($key);
             $row = $rows[0] ?? null;
             $current = 0;
             $ttl = 0;
@@ -253,6 +250,40 @@ final class DatabaseDriver implements CacheInterface
 
             return $new;
         });
+    }
+
+    /**
+     * Read a row for read-modify-write, holding a row lock until the surrounding transaction ends.
+     *
+     * A plain SELECT is a non-locking snapshot read on MySQL/PostgreSQL, so two concurrent
+     * increments would both read the same value and one update would be lost. The no-op
+     * upsert first makes sure the row exists — an absent key has no row to lock, and two
+     * transactions inserting it would otherwise race on the primary key — and locks it;
+     * `FOR UPDATE` then reads the committed value. SQLite serialises writers on its own and
+     * has no `FOR UPDATE`.
+     *
+     * @param string $key
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function lockedRead(string $key): array
+    {
+        $driver = $this->db->getPdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
+        $select = "SELECT value, expiration FROM {$this->table} WHERE cache_key = ?";
+
+        if ($driver === 'sqlite') {
+            return $this->db->query($select, [$key]);
+        }
+
+        $insert = "INSERT INTO {$this->table} (cache_key, value, expiration) VALUES (?, ?, ?)";
+        $insert .= $driver === 'mysql'
+            ? ' ON DUPLICATE KEY UPDATE cache_key = cache_key'
+            : ' ON CONFLICT (cache_key) DO NOTHING';
+
+        // Placeholder: expired (expiration 1), so it reads as 0 and is overwritten by set().
+        $this->db->execute($insert, [$key, serialize(0), 1]);
+
+        return $this->db->query($select . ' FOR UPDATE', [$key]);
     }
 
     /**

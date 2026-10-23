@@ -96,7 +96,8 @@ interface CacheInterface
      * Atomically increment a numeric value in the cache.
      *
      * Creates the key with a starting value of 0 when absent, then adds $amount.
-     * Redis: uses native INCRBY (atomic). File/Array/Memcached: read-modify-write.
+     * Redis: uses native INCRBY (atomic). Database: read-modify-write under a row lock
+     * (atomic across connections). File/Array/Memcached: read-modify-write.
      *
      * @param string $key
      * @param int    $amount
@@ -109,7 +110,8 @@ interface CacheInterface
      * Atomically decrement a numeric value in the cache.
      *
      * Creates the key with a starting value of 0 when absent, then subtracts $amount.
-     * Redis: uses native DECRBY (atomic). File/Array/Memcached: read-modify-write.
+     * Redis: uses native DECRBY (atomic). Database: read-modify-write under a row lock
+     * (atomic across connections). File/Array/Memcached: read-modify-write.
      *
      * @param string $key
      * @param int    $amount

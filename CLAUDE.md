@@ -296,15 +296,20 @@ src/
 
 tests/
 ├── TestCase.php               — Base PHPUnit test case
+├── TaggedCacheTest.php  — Tests TaggedCache backed by ArrayDriver
+├── StampedeProtectedCacheTest.php  — Tests StampedeProtectedCache backed by ArrayDriver
+├── LockTest.php  — Tests ArrayLock and FileLock (no Redis required)
+├── CacheLockOwnershipTest.php  — release() only removes a lock the instance itself acquired; forceRelease() removes it regardless
 ├── ArrayDriverTest.php        — Full CacheInterface contract + flush tested against ArrayDriver
 ├── CacheValueTest.php         — Value contract on Array/File/Redis: scalars/arrays round-trip, objects (also nested, also via remember()) and resources rejected
 ├── FileDriverTest.php         — Full CacheInterface contract + flush; uses sys_get_temp_dir()
 ├── RedisDriverTest.php        — Full CacheInterface contract + flush; requires live Redis (#[Group('redis')])
 ├── CacheDatabaseDriverTest.php — DatabaseDriver + DatabaseLock contract on SQLite :memory: (expiry, upsert, increment, tags, tamper, lock ownership/expiry, prune(), expiration index)
-├── CacheDatabaseDriverMysqlTest.php — DDL (incl. expiration index), upsert (unchanged rewrite), lock INSERT and prune() on MySQL; skipped without DB_HOST
+├── CacheDatabaseDriverMysqlTest.php — DDL (incl. expiration index), upsert (unchanged rewrite), lock INSERT, prune() and increment() from 4 concurrent processes on MySQL; skipped without DB_HOST
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')]) — `memcached:11211` in this module's stack and the root stack; `ext-memcached` is installed by both Dockerfiles (not in the base image)
 ├── CacheTest.php              — Covers Cache facade: delegation of every CacheInterface method, uninitialized throw, reset
 ├── Cache/
+│   ├── RedisLockTest.php  — Unit tests for RedisLock against a mocked phpredis client (no Redis server required)
 │   └── ApplicationTestCase.php — Extends EzPhp\Testing\ApplicationTestCase; overrides getBasePath() to write config/cache.php that reads CACHE_* env vars at require-time
 └── CacheServiceProviderTest.php — Verifies driver selection from config and deferred facade wiring; extends Tests\Cache\ApplicationTestCase
 ```
@@ -333,7 +338,7 @@ The single contract all drivers implement.
 In-memory store. Each entry is `['value' => mixed, 'expires' => int|null]`. Expiry is checked lazily on read via the private `read()` helper, which also removes stale entries.
 
 - No persistence — data is lost when the PHP process ends
-- Safe for use in tests without cleanup; isolated per instance
+- Cache entries are isolated per instance; **locks are not** — `ArrayLock` keeps one process-wide static registry, so a lock taken through one `ArrayDriver` blocks the same key on every other instance. Tests that take locks call `ArrayLock::reset()` in `setUp()`/`tearDown()` (as `LockTest` and `CacheLockOwnershipTest` do)
 - `flush()` resets `$store` to `[]`
 
 ---
@@ -384,7 +389,7 @@ Cache on `ez-php/contracts`' `DatabaseInterface` — the shared cache for applic
 - `cache`: `cache_key` (PK), `value` (serialised), `expiration` (Unix timestamp, `0` = never). Expired rows are misses and are deleted on read; a negative TTL deletes the key
 - `set()` is one driver-aware upsert (`ON DUPLICATE KEY UPDATE` / `ON CONFLICT … DO UPDATE`)
 - `flush()` deletes only this driver's `cache` rows — nothing else in the database
-- `increment()`/`decrement()` are read-modify-write inside one `transaction()`, keeping the entry's expiry
+- `increment()`/`decrement()` are read-modify-write inside one `transaction()`, keeping the entry's expiry. On MySQL/PostgreSQL the read holds a row lock: a no-op upsert first creates (or locks) the row — an absent key has no row to lock — then `SELECT … FOR UPDATE` reads the committed value. A plain `SELECT` is a non-locking snapshot read under InnoDB's REPEATABLE READ, so concurrent increments used to lose updates. SQLite serialises writers itself
 - `DatabaseLock`: `acquire()` first deletes an expired row for the key, then INSERTs `(lock_key, owner, expiration)`; a primary-key violation (`PDOException`) means "held". `release()` deletes only the row with its own owner token; `forceRelease()` deletes any
 
 ---

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests;
 
+use Composer\Autoload\ClassLoader;
 use EzPhp\Cache\CacheStats;
 use EzPhp\Cache\CacheValue;
 use EzPhp\Cache\DatabaseDriver;
@@ -11,12 +12,15 @@ use EzPhp\Cache\DatabaseLock;
 use EzPhp\Database\Database;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use ReflectionClass;
+use RuntimeException;
 
 /**
  * The dialect-specific parts of DatabaseDriver on MySQL: the DDL, the
  * `ON DUPLICATE KEY UPDATE` upsert (also with an unchanged value, where MySQL
- * reports 0 affected rows) and the primary-key lock INSERT. Uses the testing
- * database; skipped when DB_HOST is not set.
+ * reports 0 affected rows), the primary-key lock INSERT and increment() under
+ * concurrent writers (separate PHP processes, each with its own connection).
+ * Uses the testing database; skipped when DB_HOST is not set.
  *
  * @package Tests
  */
@@ -98,11 +102,80 @@ final class CacheDatabaseDriverMysqlTest extends TestCase
         $this->assertCount(1, $keys);
     }
 
+    public function testConcurrentIncrementsLoseNoUpdate(): void
+    {
+        $this->driver(); // creates the tables before the children race on them
+
+        $processes = 4;
+        $perProcess = 25;
+        $this->runIncrementers('fresh', $processes, $perProcess);
+
+        $this->assertSame($processes * $perProcess, $this->driver()->get('fresh'));
+    }
+
     private function driver(): DatabaseDriver
     {
         self::assertNotNull($this->db);
 
         return new DatabaseDriver($this->db, self::TABLE, self::LOCK_TABLE);
+    }
+
+    /**
+     * Run $processes PHP children that each call increment($key) $perProcess times on their own connection.
+     *
+     * @param string $key
+     * @param int    $processes
+     * @param int    $perProcess
+     */
+    private function runIncrementers(string $key, int $processes, int $perProcess): void
+    {
+        $loaderFile = (new ReflectionClass(ClassLoader::class))->getFileName();
+
+        if ($loaderFile === false) {
+            throw new RuntimeException('Cannot locate the Composer autoloader.');
+        }
+
+        $dsn = sprintf(
+            'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
+            (string) getenv('DB_HOST'),
+            (string) (getenv('DB_PORT') ?: '3306'),
+            (string) (getenv('DB_TESTING_DATABASE') ?: 'ez-php_testing'),
+        );
+        $code = sprintf(
+            'require %s; $c = new \\EzPhp\\Cache\\DatabaseDriver(new \\EzPhp\\Database\\Database(%s, %s, %s), %s, %s);'
+            . ' time_nanosleep(0, (int) max(0, (%F - microtime(true)) * 1e9));'
+            . ' for ($i = 0; $i < %d; $i++) { $c->increment(%s); }',
+            var_export(dirname($loaderFile, 2) . '/autoload.php', true),
+            var_export($dsn, true),
+            var_export((string) getenv('DB_USERNAME'), true),
+            var_export((string) getenv('DB_PASSWORD'), true),
+            var_export(self::TABLE, true),
+            var_export(self::LOCK_TABLE, true),
+            microtime(true) + 0.5,
+            $perProcess,
+            var_export($key, true),
+        );
+
+        $handles = [];
+        $pipes = [];
+
+        for ($i = 0; $i < $processes; $i++) {
+            $handle = proc_open([PHP_BINARY, '-d', 'display_errors=stderr', '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes[$i]);
+
+            if ($handle === false) {
+                throw new RuntimeException('proc_open failed.');
+            }
+
+            $handles[$i] = $handle;
+        }
+
+        foreach ($handles as $i => $handle) {
+            stream_get_contents($pipes[$i][1]);
+            $stderr = (string) stream_get_contents($pipes[$i][2]);
+            fclose($pipes[$i][1]);
+            fclose($pipes[$i][2]);
+            $this->assertSame(0, proc_close($handle), 'Incrementer failed: ' . $stderr);
+        }
     }
 
     private function dropTables(): void
