@@ -295,7 +295,7 @@ src/
 ├── StampedeProtectedCache.php — Decorator: probabilistic early recompute to prevent cache stampedes
 ├── PrunableCacheInterface.php — prune(): int for stores that keep expired entries until read (DatabaseDriver)
 ├── Console/
-│   ├── CacheClearCommand.php  — `cache:clear [--tags=a,b]`: flush the store or only the given tags
+│   ├── CacheClearCommand.php  — `cache:clear [--tags=a,b]`: flush the store or only the given tags; refuses APCu under the CLI
 │   └── CachePruneCommand.php  — `cache:prune`: prune() on a PrunableCacheInterface store (PrefixedCache unwrapped), no-op otherwise
 ├── PrefixedCache.php          — Decorator: prefixes every key, lock and tag list (shared stores, tenants); flush()/stats() delegate
 ├── Cache.php                  — Static facade backed by a deferred-resolver singleton; one-line delegations to CacheInterface
@@ -316,7 +316,7 @@ tests/
 ├── CacheDatabaseDriverMysqlTest.php — DDL (incl. expiration index), upsert (unchanged rewrite), lock INSERT, prune() and increment() from 4 concurrent processes on MySQL; skipped without DB_HOST
 ├── MemcachedDriverTest.php    — Full CacheInterface contract + flush; requires live Memcached (#[Group('memcached')]) — `memcached:11211` in this module's stack and the root stack; `ext-memcached` is installed by both Dockerfiles (not in the base image)
 ├── Console/
-│   ├── CacheClearCommandTest.php — full flush vs. --tags, name/help
+│   ├── CacheClearCommandTest.php — full flush vs. --tags, APCu refused under the CLI SAPI, name/help
 │   └── CachePruneCommandTest.php — SQLite DatabaseDriver pruned directly and behind PrefixedCache; no-op for ArrayDriver
 ├── PrefixedCacheTest.php      — two prefixes over one ArrayDriver: isolation, remember/counters, prefixed locks, tag flush per prefix, shared flush()
 ├── CacheTest.php              — Covers Cache facade: delegation of every CacheInterface method, uninitialized throw, reset
@@ -408,7 +408,7 @@ Cache on `ez-php/contracts`' `DatabaseInterface` — the shared cache for applic
 
 ### ApcuDriver (`src/ApcuDriver.php`) and ApcuLock (`src/ApcuLock.php`)
 
-Shared memory via ext-apcu — shared by the PHP-FPM workers of one host, lost on restart, never across hosts. Values are stored natively (APCu serialises them; `CacheValue` keeps objects out). `increment()`/`decrement()` are atomic: `apcu_add($key, 0)` then `apcu_inc()`/`apcu_dec()`, which keeps the TTL; a non-integer value falls back to read-modify-write. A negative TTL deletes the key. `flush()` is `apcu_clear_cache()` — the whole user cache of the host. The constructor throws unless `apcu_enabled()` is true, because with `apc.enable_cli=0` every CLI call (console, worker, tests) would silently miss.
+Shared memory via ext-apcu — shared by the PHP-FPM workers of one host, lost on restart, never across hosts. **Never shared with the CLI:** each CLI process (console, queue worker, scheduler, tests) gets its own APCu memory, discarded at exit, so CLI writes are invisible to web requests and vice versa; `cache:clear` therefore refuses an APCu store under the CLI SAPI (exit 1) rather than report a flush that never reached the workers. Values are stored natively (APCu serialises them; `CacheValue` keeps objects out). `increment()`/`decrement()` are atomic: `apcu_add($key, 0)` then `apcu_inc()`/`apcu_dec()`, which keeps the TTL; a non-integer value falls back to read-modify-write. A negative TTL deletes the key. `flush()` is `apcu_clear_cache()` — the whole user cache of the calling process's APCu memory (under PHP-FPM: of the pool). The constructor throws unless `apcu_enabled()` is true, because with `apc.enable_cli=0` every CLI call would silently miss even within its own process.
 
 `ApcuLock` stores a random integer owner token with `apcu_add()` under `__lock:{key}` (so a lock never collides with a cache entry of the same name). `release()` swaps the token for `0` with `apcu_cas()` — atomic, fails once the entry is someone else's — and then deletes the entry; in the microseconds between the two calls a concurrent `acquire()` just sees the lock as held.
 

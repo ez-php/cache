@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Console;
 
+use EzPhp\Cache\ApcuDriver;
 use EzPhp\Cache\ArrayDriver;
 use EzPhp\Cache\CacheValue;
 use EzPhp\Cache\Console\CacheClearCommand;
+use EzPhp\Cache\PrefixedCache;
 use EzPhp\Cache\TaggedCache;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -21,6 +23,8 @@ use Tests\TestCase;
 #[UsesClass(ArrayDriver::class)]
 #[UsesClass(CacheValue::class)]
 #[UsesClass(TaggedCache::class)]
+#[UsesClass(ApcuDriver::class)]
+#[UsesClass(PrefixedCache::class)]
 final class CacheClearCommandTest extends TestCase
 {
     public function test_without_tags_the_whole_store_is_flushed(): void
@@ -55,6 +59,32 @@ final class CacheClearCommandTest extends TestCase
         $this->assertFalse($cache->has('u1'));
         $this->assertTrue($cache->has('p1'));
         $this->assertTrue($cache->has('plain'));
+    }
+
+    public function test_an_apcu_store_is_refused_from_the_cli(): void
+    {
+        if (!extension_loaded('apcu') || !apcu_enabled()) {
+            self::markTestSkipped('ext-apcu is not available or apc.enable_cli is off.');
+        }
+
+        $cache = new ApcuDriver();
+        $cache->set('cache-clear-apcu', 1);
+        $errors = fopen('php://memory', 'w+');
+        self::assertIsResource($errors);
+
+        $code = (new CacheClearCommand(new PrefixedCache($cache, 'app:'), 'cli', $errors))->handle([]);
+        rewind($errors);
+
+        $this->assertSame(1, $code);
+        $this->assertStringContainsString('own APCu memory', (string) stream_get_contents($errors));
+        $this->assertTrue($cache->has('cache-clear-apcu'));
+
+        ob_start();
+        $code = (new CacheClearCommand($cache, 'fpm-fcgi'))->handle([]);
+        ob_end_clean();
+
+        $this->assertSame(0, $code);
+        $this->assertFalse($cache->has('cache-clear-apcu'));
     }
 
     public function test_name_description_and_help(): void

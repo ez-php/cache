@@ -146,6 +146,8 @@ php ez cache:clear --tags=users    # only entries tagged users
 php ez cache:prune                 # delete expired rows (database driver); schedule it
 ```
 
+With the `apcu` driver `cache:clear` exits 1 instead: the console has its own APCu memory and cannot reach the PHP-FPM workers' cache. Restart PHP-FPM, or flush from a web request. For the same reason, values a queue worker or other CLI process writes to APCu are never seen by web requests.
+
 `cache:prune` is a no-op on stores that evict on their own (array, file, Redis, Memcached).
 
 ## Drivers
@@ -156,7 +158,7 @@ php ez cache:prune                 # delete expired rows (database driver); sche
 | `file` | `file` | Filesystem, serialised entries |
 | `redis` | `redis` | Via `ext-redis`; `flush()` clears entire database |
 | `memcached` | `memcached` | Via `ext-memcached`; `flush()` clears entire server |
-| `apcu` | `apcu` | Via `ext-apcu` (CLI: `apc.enable_cli=1`); shared by one host's workers; atomic counters; `flush()` clears the APCu user cache |
+| `apcu` | `apcu` | Via `ext-apcu` (CLI: `apc.enable_cli=1`); shared by the PHP-FPM workers of one host — **not** with CLI processes, each of which gets its own short-lived APCu memory; atomic counters; `flush()` clears the APCu user cache |
 | `database` | `database` | On the bound `DatabaseInterface`; tables `cache`/`cache_locks` auto-created (MySQL, SQLite, PostgreSQL); `flush()` empties only the cache table |
 
 ## Classes
