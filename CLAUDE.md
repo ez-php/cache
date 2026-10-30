@@ -151,7 +151,7 @@ php make_module.php <name> --description="..." --services=mysql,redis --extensio
 
 `<name>` is the kebab-case package name; the namespace is derived as
 `EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
-overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`,
+overrides it. Existing exceptions the guess gets wrong: `asyncapi` → `AsyncApi`, `asyncapi-ui` → `AsyncApiUi`,
 `bignum` → `BigNum`, `dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `graphql-subscriptions` → `GraphQLSubscriptions`, `oauth` → `OAuth`,
 `opcache` → `OPCache`, `openapi` → `OpenApi`, `qrcode` → `QrCode`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
 `websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
@@ -476,7 +476,7 @@ Unknown driver values fall back to `ArrayDriver`. `boot()` calls `Cache::setReso
 | Concern | Where it belongs |
 |---|---|
 | Per-tenant prefix resolution (which tenant is active) | Application layer — construct a `PrefixedCache` per tenant |
-| Session storage | PHP native sessions or a dedicated session driver |
+| Session storage | `ez-php/session` (its `CacheSessionHandler` stores sessions in any `CacheInterface`) |
 | HTTP response caching (reverse proxy) | Infrastructure layer (Nginx, Varnish) |
 | Queue / job storage | `ez-php/queue` |
 | Rate limiting counters | `ez-php/rate-limiter` |
